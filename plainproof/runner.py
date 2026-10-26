@@ -43,8 +43,11 @@ def new_receipt(config, mode='check'):
 
 def finish(out, receipt, stop, started, emit):
     receipt['stop_reason'] = stop
-    checks = (receipt.get('resolved_plan') or {}).get('checks', [])
-    receipt['verdict'], receipt['check_results'] = evaluate(checks, receipt['checkpoints'], stop)
+    plan = receipt.get('resolved_plan') or {}
+    checks = plan.get('checks', [])
+    receipt['verdict'], receipt['check_results'], receipt['verdict_reason'] = evaluate(
+        checks, receipt['checkpoints'], stop, agent_task=plan.get('agent_task', ''),
+        marker=receipt['marker'], steps=receipt['steps'])
     if not checks and stop not in {'error', 'safety_check'}:
         receipt['verdict'] = 'INCONCLUSIVE'
     interpreted = claim_verdict(receipt['model_claim'])

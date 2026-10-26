@@ -5,10 +5,10 @@ from .common import CONFIRM
 
 def scenario_for(requirement):
     text = requirement.lower()
-    if 'counter' in text or 'items left' in text:
-        return 'counter'
     if 'delete' in text or 'remove' in text:
         return 'delete'
+    if 'counter' in text or 'items left' in text:
+        return 'counter'
     return 'reload'
 
 
@@ -20,7 +20,8 @@ def mock_plan(scenario):
                   dict(id='added', kind='text_count', text='{MARKER}', count=1, when='end')]
     elif scenario == 'delete':
         task += 'Delete that item, then reload with F5 and report whether it is absent.'
-        checks = [dict(id='deleted', kind='text_absent', text='{MARKER}', when='after_each_reload')]
+        checks = [dict(id='deleted', kind='text_absent', text='{MARKER}', when='end'),
+                  dict(id='counter', kind='text_visible', text='0 items left', when='end')]
     else:
         task += 'Reload using F5, then report whether the item is still listed.'
         checks = [dict(id='persist', kind='text_count', text='{MARKER}', count=1, when='after_each_reload')]

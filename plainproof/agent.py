@@ -97,12 +97,19 @@ class Driver:
 
 async def execute_batch(driver, actions, record):
     driver.modal_changed = False
-    for action in actions:
-        await driver.execute(action)
-        record['executed'].append(action)
-        if driver.modal_changed:
-            record['interrupted'] = 'dialog dismissed; remaining actions skipped'
-            break
+    try:
+        for action in actions:
+            await driver.execute(action)
+            record['executed'].append(action)
+            if driver.modal_changed:
+                record['interrupted'] = 'dialog dismissed; remaining actions skipped'
+                break
+    finally:
+        driver.assert_location()
+        seen = await driver.page.evaluate('(marker) => document.body.innerText.includes(marker)',
+                                          driver.receipt['marker'])
+        # A response can contain several batches; preserve any earlier sighting.
+        record['marker_seen'] = record.get('marker_seen', False) or seen
 
 
 async def operate(create, driver, task, png, receipt, config):

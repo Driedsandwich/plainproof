@@ -10,7 +10,7 @@ def claim_verdict(claim):
     return ('PASS' if yes else 'FAIL') if yes != no else None
 
 
-def evaluate(checks, checkpoints, stop):
+def evaluate(checks, checkpoints, stop, *, agent_task='', marker='', steps=()):
     results = []
     missing = False
     for check in checks:
@@ -34,12 +34,17 @@ def evaluate(checks, checkpoints, stop):
             results.append({'check': check, 'checkpoint': cp['id'], 'source': cp['source'],
                             'passed': passed, 'actual_count': count, 'evidence': snippet,
                             'covered': covered, 'screenshot': cp['screenshot']})
+    reason = None
     if stop == 'safety_check':
         verdict = 'stopped_safety_check'
     elif stop == 'error':
         verdict = 'ERROR'
+    elif (marker and marker in agent_task and
+          not any(s.get('marker_seen') is True for s in steps) and
+          not any(marker in p['page_text'] for p in checkpoints)):
+        verdict, reason = 'INCONCLUSIVE', 'marker_never_seen'
     elif stop != 'model_finished' or missing:
         verdict = 'INCONCLUSIVE'
     else:
         verdict = 'FAIL' if any(r['passed'] is False for r in results) else 'PASS'
-    return verdict, results
+    return verdict, results, reason

@@ -36,6 +36,10 @@ def write(out, receipt):
              'img{width:100%;border:1px solid #ccd5df}article{margin:30px 0}h1{font-size:36px}',
              '</style><h1>Plainproof · ' + esc(data['verdict']) + '</h1>',
              '<p>' + esc(data['requirement']) + '</p>']
+    if data.get('verdict_reason'):
+        parts.append('<p><strong>Verdict reason: ' + esc(data['verdict_reason']) + '</strong> — '
+                     'The task requires the marker, but it never appeared in visible page text '
+                     'at any action batch or checkpoint.</p>')
     if data.get('original_receipt'):
         link = esc(data['original_receipt_html'])
         parts.append(f'<p>Replay of <a href="{link}">original receipt</a> · {esc(data["original_sha256"])}</p>')

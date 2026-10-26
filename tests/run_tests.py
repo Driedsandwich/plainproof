@@ -23,12 +23,26 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / 'test-artifacts'
 RELOAD = 'A new to-do is still in the list after I reload the page.'
 COUNTER = 'After adding one to-do and marking it done, the counter decreases to 0 items left.'
+DELETE = 'After I add one to-do and then delete it, it is gone from the list and the counter shows 0 items left.'
 SENTINEL = 'test-credential-sentinel-never-write-6192'
 
 
 def config(name, variant='correct', requirement=RELOAD, **kwargs):
     return Config(out=str(OUT / name), app_dir=str(ROOT / 'demo_app' / variant),
                   requirement=requirement, mock=True, **kwargs)
+
+
+class NoOpOperator:
+    """Observe the untouched page, then claim completion without changing it."""
+    def __init__(self, page, marker):
+        self.turn = 0
+
+    async def create(self, **request):
+        self.turn += 1
+        output = ([dict(type='computer_call', call_id='idle', actions=[dict(type='wait')],
+                        pending_safety_checks=[])] if self.turn == 1 else
+                  [dict(type='message', content=[dict(type='output_text', text='The counter is correct.')])])
+        return dict(id=f'idle-{self.turn}', output=output, usage={})
 
 
 async def suite():
@@ -82,6 +96,36 @@ async def suite():
         r = await run(config('delete', requirement='Delete a new to-do and ensure it stays removed after reload.'))
         assert r['verdict'] == 'PASS'
         print('PASS add / delete / reload => PASS')
+        r = await run(config('delete-noop', requirement=DELETE), operator_factory=NoOpOperator)
+        assert r['verdict'] == 'INCONCLUSIVE' and r['verdict_reason'] == 'marker_never_seen', r
+        assert all(c['passed'] is True for c in r['check_results'])
+        assert r['steps'][0]['marker_seen'] is False
+        assert 'marker_never_seen' in (OUT / 'delete-noop/receipt.html').read_text()
+        print('PASS no-op delete: all final checks true => INCONCLUSIVE / marker_never_seen; reason in HTML')
+        r = await replay(OUT / 'delete-noop', config('replay-delete-noop'))
+        assert r['verdict'] == 'INCONCLUSIVE' and r['verdict_reason'] == 'marker_never_seen'
+        assert r['model_calls'] == {'planner': 0, 'operator': 0} and r['usd'] == 0
+        print('PASS no-op delete replay => INCONCLUSIVE / marker_never_seen; zero model calls')
+        # A replay must remeasure visibility rather than trust old step booleans.
+        original = json.loads((OUT / 'delete-noop/receipt.json').read_text())
+        original['steps'][0]['marker_seen'] = True
+        original['verdict'] = 'PASS'
+        untrusted = OUT / 'delete-untrusted'
+        untrusted.mkdir()
+        (untrusted / 'receipt.json').write_text(json.dumps(original))
+        r = await replay(untrusted, config('replay-delete-untrusted'))
+        assert r['verdict_reason'] == 'marker_never_seen' and r['steps'][0]['marker_seen'] is False
+        print('PASS replay recomputes marker visibility; ignores source marker_seen=True')
+        r = await run(config('delete-counter', requirement=DELETE))
+        assert r['verdict'] == 'PASS' and r['verdict_reason'] is None, r
+        assert [s['marker_seen'] for s in r['steps']] == [True, False, False]
+        assert all('page_text' not in s for s in r['steps'])
+        assert all(r['marker'] not in c['page_text'] for c in r['checkpoints'])
+        print('PASS add / delete / 0 items left => PASS; transient marker recorded only as step boolean')
+        r = await replay(OUT / 'delete-counter', config('replay-delete-counter'))
+        assert r['verdict'] == 'PASS' and r['model_calls'] == {'planner': 0, 'operator': 0}
+        assert [s['marker_seen'] for s in r['steps']] == [True, False, False]
+        print('PASS add / delete replay => PASS; marker remeasured, zero model calls')
     for mutation in ('extra', 'bad_kind', 'boolean_count', 'duplicate', 'empty'):
         p = mock_plan('reload')
         if mutation == 'extra': p['selector'] = '#items'
@@ -101,6 +145,19 @@ async def suite():
     check = dict(id='n', kind='text_count', text='one', count=1, when='after_each_reload')
     assert evaluate([check], cp, 'model_finished')[0] == 'FAIL'
     print('PASS every checkpoint is evaluated (later success cannot mask earlier failure)')
+    absent = dict(id='deleted', kind='text_absent', text='unique-marker', when='end')
+    end = [dict(id='end', source='end', page_text='0 items left', screenshot='end.png')]
+    args = dict(agent_task='Add unique-marker, then delete it.', marker='unique-marker')
+    for checks in ([absent], [dict(absent, kind='text_visible')]):
+        verdict, _, reason = evaluate(checks, end, 'model_finished', **args)
+        assert verdict == 'INCONCLUSIVE' and reason == 'marker_never_seen'
+    assert evaluate([absent], end, 'model_finished', **args, steps=[{'marker_seen': True}])[0] == 'PASS'
+    seen = [dict(id='early', source='model', page_text='unique-marker', screenshot='early.png')]
+    assert evaluate([absent], seen + end, 'model_finished', **args)[0] == 'PASS'
+    assert evaluate([absent], end, 'model_finished', marker='unique-marker', agent_task='Observe counter.')[0] == 'PASS'
+    assert evaluate([absent], end, 'error', **args)[0] == 'ERROR'
+    assert evaluate([absent], end, 'safety_check', **args)[0] == 'stopped_safety_check'
+    print('PASS marker guard: overrides passing/failing checks; accepts step/checkpoint sightings; scoped to task; preserves errors/safety')
     async with async_playwright() as pw:
         with app_server(ROOT / 'demo_app/correct') as url:
             browser, page = await sandbox(pw, url, dict(width=1024, height=768))
