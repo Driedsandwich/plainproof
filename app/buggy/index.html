@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tiny To-do</title>
+<style>
+  body { font: 20px system-ui, sans-serif; max-width: 620px; margin: 80px auto; color: #192638; }
+  h1 { font-size: 32px; }
+  form { display: flex; gap: 12px; }
+  input { flex: 1; min-width: 0; padding: 12px; font: inherit; }
+  button { padding: 12px 24px; font: inherit; cursor: pointer; }
+  li { padding: 8px 0; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<h1>Tiny To-do</h1>
+<form id="add-form">
+  <input id="todo-input" aria-label="New to-do" placeholder="New to-do" autocomplete="off">
+  <button type="submit">Add</button>
+</form>
+<ul id="items" aria-label="To-do items"></ul>
+<script>
+const input = document.querySelector('#todo-input');
+const list = document.querySelector('#items');
+let items = JSON.parse(localStorage.getItem('todos') || '[]');
+function render() {
+  list.replaceChildren(...items.map(text => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    return li;
+  }));
+}
+document.querySelector('#add-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  items.push(text);
+  // Injected defect: omit saving newly added items to localStorage.
+  input.value = '';
+  render();
+});
+render();
+</script>
+</body>
+</html>
