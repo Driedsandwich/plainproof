@@ -11,7 +11,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('plainproof_min', ROOT / 'plainproof_min.py')
 harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tiny To-do · Plainproof</title>
+<style>
+  body { font: 20px system-ui, sans-serif; max-width: 620px; margin: 80px auto; color: #192638; }
+  h1 { font-size: 32px; }
+  form { display: flex; gap: 12px; }
+  input[type=text] { flex: 1; min-width: 0; padding: 12px; font: inherit; }
+  button { padding: 12px 24px; font: inherit; cursor: pointer; }
+  ul { padding: 0; list-style: none; }
+  li { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+  li span { flex: 1; overflow-wrap: anywhere; }
+  input[type=checkbox] { width: 24px; height: 24px; }
+  .done { text-decoration: line-through; color: #64748b; }
+  #counter { color: #45566b; }
+</style>
+</head>
+<body>
+<h1>Tiny To-do</h1>
+<form id="add-form">
+  <input type="text" id="todo-input" aria-label="New to-do" placeholder="New to-do" autocomplete="off">
+  <button type="submit">Add</button>
+</form>
+<p id="counter" aria-live="polite"></p>
+<ul id="items" aria-label="To-do items"></ul>
+<script>
+const input = document.querySelector('#todo-input');
+const list = document.querySelector('#items');
+let items = JSON.parse(localStorage.getItem('todos') || '[]');
+function save() { localStorage.setItem('todos', JSON.stringify(items)); }
+function render() {
+  // PLANTED BUG: completed items still count as unfinished.
+  document.querySelector('#counter').textContent = `${items.length} items left`;
+  list.replaceChildren(...items.map((item, index) => {
+    const li = document.createElement('li');
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.checked = item.done;
+    toggle.setAttribute('aria-label', `Mark ${item.text} done`);
+    toggle.addEventListener('change', () => { item.done = toggle.checked; save(); render(); });
+    const label = document.createElement('span');
+    label.textContent = item.text;
+    label.className = item.done ? 'done' : '';
+    const remove = document.createElement('button');
+    remove.textContent = 'Delete';
+    remove.setAttribute('aria-label', `Delete ${item.text}`);
+    remove.addEventListener('click', () => { items.splice(index, 1); save(); render(); });
+    li.append(toggle, label, remove);
+    return li;
+  }));
+}
+document.querySelector('#add-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  items.push({text, done: false});
+  save();
+  input.value = '';
+  render();
+});
+render();
+</script>
+</body>
+</html>
