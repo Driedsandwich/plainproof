@@ -61,7 +61,7 @@ def main():
     if args.out.exists() and any(args.out.iterdir()):
         p.error('--out must be fresh (raw videos are never overwritten)')
     args.out.mkdir(parents=True, exist_ok=True)
-    events = dict(version=1, mock=args.mock, base=base, phases=[], receipts={}, receipt_ids={}, commands=[])
+    events = dict(version=1, mock=args.mock, base=base, phases=[], receipts={}, receipt_ids={}, commands=[], focus=[])
     clock = time.monotonic
 
     @contextmanager
@@ -115,22 +115,37 @@ def main():
                 raise RuntimeError('Receipt not served; use the updated web/server.py and matching --web-out')
             page.wait_for_function('[...document.images].every(i => i.complete && i.naturalWidth > 0)')
 
-        def show(scene, name, locator, seconds=3):
+        def show(scene, name, locator, seconds=2.2):
             with phase(scene, name):
-                locator.evaluate("el => { el.scrollIntoView({block:'start'}); window.scrollBy(0,-95); }")
+                locator.scroll_into_view_if_needed()
+                locator.evaluate("el => el.scrollIntoView({block:'center'})")
+                # Wait for the scroll paint before measuring viewport coordinates.
+                page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+                box = locator.bounding_box()
+                if not box:
+                    raise RuntimeError('Focus target is not visible: ' + name)
+                left, top = max(0, box['x']-24), max(0, box['y']-24)
+                right = min(1280, box['x']+box['width']+24)
+                bottom = min(900, box['y']+box['height']+24)
+                focus = dict(scene=scene, phase=name, start=clock(),
+                    rect=dict(x=left, y=top, width=right-left, height=bottom-top))
+                events['focus'].append(focus)
                 pause(seconds)
+                focus['end'] = clock()
 
-        def show_fragment(scene, name, locator, text):
-            with phase(scene, name):
-                locator.evaluate('''(el, text) => {
-                    const start = el.textContent.indexOf(text);
-                    if (start < 0) throw Error('Missing receipt evidence');
-                    const range = document.createRange();
-                    range.setStart(el.firstChild, start);
-                    range.setEnd(el.firstChild, start + text.length);
-                    window.scrollBy(0, range.getBoundingClientRect().top - 180);
-                }''', text)
-                pause(3)
+        def banner(scene, name, run_id):
+            with phase(scene, 'open_receipt'):
+                go(run_id)
+            show(scene, name, page.locator('#verdict'))
+
+        def check_row(text, source=None):
+            # Check IDs belong to the planner. Locate the literal expectation,
+            # then the checkpoint source, rather than a mock's chosen ID.
+            rows = page.locator('#checks tbody tr').filter(
+                has=page.locator('td:nth-child(2)').filter(has_text=text))
+            if source:
+                rows = rows.and_(page.locator(f'[data-source="{source}"]'))
+            return rows.first
 
         def enter(scene, variant, requirement):
             with phase(scene, 'typing'):
@@ -159,12 +174,10 @@ def main():
             events['receipt_ids']['run_fail'] = failed_id
             if failed['verdict'] != 'FAIL' or '1 items left' not in json.dumps(failed['check_results']):
                 raise RuntimeError('Counter run lacks expected FAIL / 1 items left; keep footage and inspect plan')
-            with phase('receipt_fail', 'verdict'):
-                go(failed_id)
-                pause(3)
-            show('receipt_fail', 'plan', page.get_by_role('heading', name='Plan', exact=True))
-            show('receipt_fail', 'evidence', page.get_by_role('heading', name='Checks and evidence'))
-            show('receipt_fail', 'audit', page.locator('h3').filter(has_text='audit').last)
+            banner('receipt_fail', 'verdict', failed_id)
+            show('receipt_fail', 'plan', page.locator('#plan'))
+            show('receipt_fail', 'evidence', check_row('0 items left').filter(has_text='1 items left'))
+            show('receipt_fail', 'audit', check_row('0 items left', 'audit'))
             with phase('replay', 'select_correct'):
                 page.goto(base)
                 page.locator('#variant').select_option('correct')
@@ -185,25 +198,19 @@ def main():
             replayed = receipt(replay_id)
             if replay_cmd['exit_code'] != 0 or replayed['verdict'] != 'PASS' or replayed['model_calls'] != {'planner': 0, 'operator': 0} or replayed['usd'] != 0:
                 raise RuntimeError('Replay did not produce PASS / zero model calls / USD 0')
-            with phase('replay_receipt', 'verdict'):
-                go(replay_id)
-                pause(3)
-            show('replay_receipt', 'run_details', page.get_by_role('heading', name='Run details'))
-            details = page.locator('body > pre').last
-            show_fragment('replay_receipt', 'zero_model_calls', details, '"model_calls"')
-            show_fragment('replay_receipt', 'zero_usd', details, '"usd"')
-            show('replay_receipt', 'counter_evidence', page.get_by_role('heading', name='Checks and evidence'))
+            banner('replay_receipt', 'verdict', replay_id)
+            show('replay_receipt', 'run_details', page.locator('#run-details'))
+            show('replay_receipt', 'zero_model_calls', page.locator('#model-calls'))
+            show('replay_receipt', 'zero_usd', page.locator('#usd'))
+            show('replay_receipt', 'counter_evidence', check_row('0 items left', 'audit'))
             live_id, live = enter('live_new', 'correct', DELETE)
             events['receipt_ids']['live_new'] = live_id
             if live['verdict'] != 'PASS' or not any(s.get('marker_seen') for s in live['steps']) or not all(c['passed'] for c in live['check_results']):
                 raise RuntimeError('New requirement lacks PASS / positive marker sighting / passing checks')
-            with phase('live_new', 'receipt_verdict'):
-                go(live_id)
-                pause(3)
-            show_fragment('live_new', 'marker_seen', page.locator('article pre').filter(has_text='"marker_seen": true').first, '"marker_seen": true')
-            show('live_new', 'final_checks', page.get_by_role('heading', name='Checks and evidence'))
-            # Real planners choose their own check ids, so find the final counter check by its text.
-            show('live_new', 'final_counter', page.locator('article pre').filter(has_text='0 items left').first)
+            banner('live_new', 'receipt_verdict', live_id)
+            show('live_new', 'marker_seen', page.locator('#steps [data-step][data-marker-seen="true"]').first)
+            show('live_new', 'final_checks', page.locator('#checks'))
+            show('live_new', 'final_counter', check_row('0 items left', 'audit'))
             with phase('guard_control', 'cli_execution', True):
                 page.set_content('<body style="background:#101c2c;color:white;padding:70px;font:28px system-ui"><h1>Offline negative control</h1><p>Running the mock CLI with an operator that does nothing…</p><p>Waiting for the actual receipt.</p></body>')
                 control_cmd = command([sys.executable, '-m', 'plainproof', 'check', '--app-dir', str(args.repo / 'demo_app/correct'),
@@ -212,11 +219,9 @@ def main():
             events['receipt_ids']['guard_control'] = 'noop-control'
             if control_cmd['exit_code'] != 2 or control['verdict'] != 'INCONCLUSIVE' or control['verdict_reason'] != 'marker_never_seen' or not all(c['passed'] for c in control['check_results']):
                 raise RuntimeError('No-op control does not satisfy expected marker guard evidence')
-            with phase('guard_control', 'verdict_reason'):
-                go('noop-control')
-                pause(3)
-            show('guard_control', 'passing_checks', page.get_by_role('heading', name='Checks and evidence'))
-            show('guard_control', 'passing_counter', page.locator('article pre').filter(has_text='"id": "counter"').first)
+            banner('guard_control', 'verdict_reason', 'noop-control')
+            show('guard_control', 'passing_checks', page.locator('#checks'))
+            show('guard_control', 'passing_counter', check_row('0 items left', 'audit'))
             with phase('closing', 'repository'):
                 excerpt = '\n'.join(line for line in (args.repo / 'README.md').read_text().splitlines() if any(w in line.lower() for w in ('hackathon', 'october', 'oct 27', 'day-one')))
                 snapshot = '\n'.join(str(x.relative_to(args.repo)) for x in sorted((args.repo / 'day1_minimal').glob('*')) if x.is_file())
@@ -234,7 +239,7 @@ def main():
             browser.close()
     sync_video = calibrate(raw_path)
     origin = sync_clock - sync_video
-    for item in events['phases']:
+    for item in events['phases'] + events['focus']:
         item['start'] = round(item['start'] - origin, 4)
         item['end'] = round(item['end'] - origin, 4)
     events['scenes'] = [dict(scene=scene, start=min(p['start'] for p in events['phases'] if p['scene']==scene),

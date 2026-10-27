@@ -36,3 +36,16 @@ def font_path(explicit=None):
         if Path(name).is_file():
             return name
     raise ValueError('No default font found; pass --font /path/to/font.ttf')
+
+
+def coverage_gaps(intervals, end):
+    """Return uncovered time, including leading and trailing silence."""
+    cursor, gaps = 0., []
+    for item in sorted(intervals, key=lambda item: item['start']):
+        start, stop = max(0., item['start']), min(end, item['end'])
+        if start > cursor:
+            gaps.append(dict(start=cursor, end=start, duration=start-cursor))
+        cursor = max(cursor, stop)
+    if cursor < end:
+        gaps.append(dict(start=cursor, end=end, duration=end-cursor))
+    return gaps

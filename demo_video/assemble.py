@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import wave
 from PIL import Image, ImageDraw, ImageFont
-from common import SCENES, duration, font_path, probe, read, write
+from common import SCENES, duration, font_path, probe, read, write, coverage_gaps
 
 W, H, FPS, TOTAL = 1920, 1080, 30, 175
 BG = (12, 22, 36)
@@ -132,22 +132,31 @@ def main():
     if max(ph['end'] for ph in events['phases']) > raw_duration + .15:
         p.error('Events extend past raw recording')
 
-    # Reserve all nonwaiting frames at their original speed. The remainder is
-    # distributed by scene; only waiting can be accelerated. Padding is a still
-    # of that scene's final frame, never a loop or a speed change to typing.
-    minimum = {}
-    for s in SCENES:
-        fixed = sum(ph['end']-ph['start'] for ph in phases[s] if not ph['waiting'])
-        wait = sum(ph['end']-ph['start'] for ph in phases[s] if ph['waiting'])
-        speech = sum(c['duration'] for c in narration[s]) + .4*len(narration[s])
-        minimum[s] = math.ceil(max(fixed + min(wait, 2), speech) * FPS)
+    # Preserve typing/evidence speed, compress waits, and give each scene only
+    # enough still time to accommodate speech and short natural pauses.
+    minimum, capacity = {}, {}
+    for scene in SCENES:
+        fixed = sum(ph['end']-ph['start'] for ph in phases[scene] if not ph['waiting'])
+        wait = sum(ph['end']-ph['start'] for ph in phases[scene] if ph['waiting'])
+        speech = sum(c['duration'] for c in narration[scene])
+        title = 4 if scene == 'intro' else 0
+        minimum[scene] = math.ceil(max(fixed + min(wait, 1), speech + .3*len(narration[scene])-title) * FPS)
+        capacity[scene] = math.floor((speech + 3.2*len(narration[scene])-title) * FPS)
+        if minimum[scene] > capacity[scene]:
+            p.error('Scene ' + scene + ' has too much idle footage for its narration; shorten pauses or add a factual line.')
     available = (TOTAL-10)*FPS
     if sum(minimum.values()) > available:
-        p.error('Normal-speed moments or narration exceed 175s; record shorter pauses or shorten TTS duration. No typing/results were accelerated.')
-    weights = dict(zip(SCENES, (16, 31, 22, 13, 23, 24, 13, 23)))
-    remaining = available - sum(minimum.values())
-    frames = {s: minimum[s]+int(remaining*weights[s]/sum(weights.values())) for s in SCENES}
-    frames['closing'] += available - sum(frames.values())
+        p.error('Normal-speed moments or narration exceed 175s; record shorter pauses or increase the TTS rate.')
+    frames = dict(minimum)
+    # Add frames evenly, respecting the maximum narration gap in each scene.
+    while sum(frames.values()) < available:
+        eligible = [scene for scene in SCENES if frames[scene] < capacity[scene]]
+        if not eligible:
+            p.error('Insufficient narration for a 175s cut without long silence; add factual lines.')
+        for scene in eligible:
+            if sum(frames.values()) == available:
+                break
+            frames[scene] += 1
     segments, captions, scene_times = [], [], []
     cursor = 4.0
     for s in SCENES:
@@ -169,16 +178,56 @@ def main():
             parts.append(dict(scene=s, phase='hold_final_frame', start=cursor+local,
                 end=cursor+target, raw_start=phases[s][-1]['end']-.08,
                 raw_end=phases[s][-1]['end']-.08, speed_factor=1., waiting=False, hold=True))
-        speech_cursor = cursor + .2
+        # Spread pauses through the scene instead of leaving a long silent tail.
+        # Intro speech begins over the title. Final speech ends exactly where
+        # the six-second closing card begins, so its silence is fully exempt.
+        speech_start = 0 if s == 'intro' else cursor
+        speech_end = cursor + target
+        slack = speech_end-speech_start-sum(c['duration'] for c in narration[s])
+        gap = slack / (len(narration[s]) - (.5 if s == 'closing' else 0))
+        speech_cursor = speech_start + gap/2
         for c in narration[s]:
             captions.append(dict(scene=s, text=c['text'], start=speech_cursor,
                                   end=speech_cursor+c['duration'], path=c['path']))
-            speech_cursor += c['duration'] + .4
+            speech_cursor += c['duration'] + gap
         segments.extend(parts)
         scene_times.append(dict(scene=s, start=cursor, end=cursor+target))
         cursor += target
+    focus = []
+    for event in events.get('focus', []):
+        part = next((seg for seg in segments if seg['scene']==event['scene'] and
+                     seg['phase']==event['phase'] and not seg['hold']), None)
+        if not part:
+            p.error('Focus has no matching footage segment')
+        start = part['start'] + (event['start']-part['raw_start'])/part['speed_factor']
+        end = part['start'] + (event['end']-part['raw_start'])/part['speed_factor']
+        held = next((seg for seg in segments if seg['scene']==event['scene'] and seg['hold'] and
+                     event['start'] <= seg['raw_start'] <= event['end']), None)
+        if held:
+            end = held['end']
+        rect = event['rect']
+        # The unchanged wide view fits 1280x900 footage into a 1920x1080
+        # canvas at (320,90). Grow its measured rectangle to 16:9, never shrink.
+        width = math.ceil(max(rect['width'], rect['height']*16/9)/32)*32
+        height = width*9/16
+        cx = rect['x']+rect['width']/2+320
+        cy = rect['y']+rect['height']/2+90
+        width = min(W, width)
+        height = width*9/16
+        x = min(max(0, cx-width/2), W-width)
+        y = min(max(0, cy-height/2), H-height)
+        focus.append(dict(scene=event['scene'], phase=event['phase'], start=start, end=end,
+            viewport_rect=rect, crop=dict(x=x, y=y, width=width, height=height),
+            transition_seconds=.4, transition_steps=6, held_final_frame=bool(held)))
+    if not focus:
+        p.error('No recorded focus intervals; re-record with the updated recorder')
+    gaps = coverage_gaps(captions, TOTAL)
+    if any(g['duration'] > 4.0001 and g['start'] < TOTAL-6-.001 for g in gaps):
+        p.error('Planned narration contains a silence longer than 4s before the closing card')
     write(args.out.with_name('timeline.json'), dict(duration=TOTAL, scenes=scene_times,
-          segments=segments, captions=captions, title=dict(start=0,end=4), closing_card=dict(start=169,end=175), mock=args.mock_watermark))
+          segments=segments, captions=captions, focus=focus, title=dict(start=0,end=4),
+          closing_card=dict(start=169,end=175), mock=args.mock_watermark,
+          narration_fallback=manifest['fallback']))
     args.out.with_suffix('.srt').write_text('\n\n'.join(
         f'{i+1}\n{srt_time(c["start"])} --> {srt_time(c["end"])}\n{c["text"]}' for i,c in enumerate(captions))+'\n', encoding='utf-8')
     for i,c in enumerate(captions):
@@ -192,7 +241,7 @@ def main():
         badge(assets / f'{s}-badge.png', label, font)
 
     outputs = []
-    def render(name, parts, overlays, length):
+    def render(name, parts, overlays, length, camera=()):
         argv, graph, labels = [], [], []
         index = 0
         for part in parts:
@@ -211,6 +260,49 @@ def main():
             index += 1
         graph.append(''.join(labels)+f'concat=n={len(labels)}:v=1:a=0[base]')
         last='base'
+        if camera:
+            # First produce a uniform 30fps canvas. Then crop exact frame ranges
+            # with fixed rectangles: crop's width/height and input bounds are
+            # static on some ffmpeg builds, so dynamic scale + crop can miscenter.
+            canvas = assets / f'{name}-canvas.mp4'
+            ffmpeg([*argv, '-filter_complex_threads', '1', '-filter_complex', ';'.join(graph),
+                '-map', '[base]', '-an', '-t', length, '-r', FPS, '-c:v', 'libx264',
+                '-preset', 'veryfast', '-crf', '18', '-pix_fmt', 'yuv420p', '-threads', '2', canvas])
+            count = round(length*FPS)
+            cuts = {0, count}
+            for f in camera:
+                a, b = f['start'], f['end']
+                ramp = min(f['transition_seconds'], (b-a)/2)
+                for step in range(7):
+                    for moment in (a+ramp*step/6, b-ramp*step/6):
+                        cuts.add(min(count, max(0, round(moment*FPS))))
+            cuts = sorted(cuts)
+            argv, graph, labels = [], [], []
+            for index,(first,last_frame) in enumerate(zip(cuts, cuts[1:])):
+                t = (first+last_frame)/(2*FPS)
+                active = next((f for f in camera if f['start'] <= t <= f['end']), None)
+                x, y, width, height = 0, 0, W, H
+                if active:
+                    a, b = active['start'], active['end']
+                    ramp = min(active['transition_seconds'], (b-a)/2)
+                    progress = min(1., (t-a)/ramp, (b-t)/ramp)
+                    ease = (1-math.cos(math.pi*progress))/2
+                    r = active['crop']
+                    zoom = 1+(W/r['width']-1)*ease
+                    cx = W/2+(r['x']+r['width']/2-W/2)*ease
+                    cy = H/2+(r['y']+r['height']/2-H/2)*ease
+                    # Multiples of 32x18 keep an exact 16:9 aspect and square
+                    # pixels across concat, without needing a setsar filter.
+                    units = math.ceil(W/zoom/32)
+                    width, height = units*32, units*18
+                    x = max(0, min(W-width, round(cx-width/2)))
+                    y = max(0, min(H-height, round(cy-height/2)))
+                argv += ['-threads', '1', '-ss', first/FPS, '-t', (last_frame-first)/FPS, '-i', canvas]
+                graph.append(f'[{index}:v]setpts=PTS-STARTPTS,crop={width}:{height}:{x}:{y},scale={W}:{H}[shot{index}]')
+                labels.append(f'[shot{index}]')
+            graph.append(''.join(labels)+f'concat=n={len(labels)}:v=1:a=0[camera]')
+            index = len(labels)
+            last='camera'
         if args.mock_watermark:
             overlays.append((assets / 'watermark.png', 0, length))
         for j,(png,start,end) in enumerate(overlays):
@@ -227,7 +319,9 @@ def main():
         print(f'Rendered {name}: {length:.2f}s', flush=True)
 
     card(assets / 'title.png', font)
-    render('00-title', [dict(card=assets / 'title.png')], [], 4)
+    render('00-title', [dict(card=assets / 'title.png')],
+           [(assets / f'caption-{j}.png', c['start'], min(4, c['end']))
+            for j,c in enumerate(captions) if c['start'] < 4], 4)
     for i,scene in enumerate(scene_times):
         s, start = scene['scene'], scene['start']
         length = scene['end']-start
@@ -241,7 +335,8 @@ def main():
                 png = assets / f'{s}-waiting-{j}.png'
                 badge(png, f'Waiting accelerated ×{max(1, round(part["speed_factor"]))}', font, y=100)
                 overlays.append((png, part['start']-start, part['end']-start))
-        render(f'{i+1:02d}-{s}', parts, overlays, length)
+        camera = [{**f, 'start': f['start']-start, 'end': f['end']-start} for f in focus if f['scene']==s]
+        render(f'{i+1:02d}-{s}', parts, overlays, length, camera)
     card(assets / 'closing.png', font, closing=True)
     render('09-closing-card', [dict(card=assets / 'closing.png')], [], 6)
     # Identical encodes allow lossless packet concatenation. This is the concat

@@ -16,6 +16,10 @@
     "text": "Muse Spark 1.3 plans structured checks, then uses the native computer tool to operate the browser. Screenshots and steps arrive as it works."
   },
   {
+    "scene": "run_fail",
+    "text": "The operator works from screenshots through the native computer tool. Waiting is shown accelerated."
+  },
+  {
     "scene": "receipt_fail",
     "text": "The model does not decide success. The counter still says ‘1 items left,’ and Python's page-text checks return FAIL."
   },
@@ -24,8 +28,16 @@
     "text": "The receipt exposes the checks the planner chose and the evidence from an independent reload. You can inspect what PASS or FAIL actually means."
   },
   {
+    "scene": "receipt_fail",
+    "text": "Every screenshot, action and check is stored in the receipt. Checks compare literal page text."
+  },
+  {
     "scene": "replay",
     "text": "Now I switch to the correct app. Replay is a CLI operation today: I reuse the failing receipt's executed actions and checks against this version."
+  },
+  {
+    "scene": "replay",
+    "text": "Replay repeats the recorded actions with zero model calls."
   },
   {
     "scene": "replay_receipt",
@@ -40,8 +52,16 @@
     "text": "It passes after the item appears and is deleted. The receipt records that the marker was actually seen before it vanished."
   },
   {
+    "scene": "live_new",
+    "text": "The audit reload re-checks the final state."
+  },
+  {
     "scene": "guard_control",
     "text": "This offline no-op control has the same passing final checks, but never creates the item. The marker guard makes it inconclusive, preventing a vacuous pass."
+  },
+  {
+    "scene": "guard_control",
+    "text": "The marker guard requires this run's marker to appear at least once."
   },
   {
     "scene": "closing",

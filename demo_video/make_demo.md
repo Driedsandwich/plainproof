@@ -21,8 +21,8 @@ say -v 'Ava (Premium)' -r 170 -o /tmp/plainproof-voice-check.aiff 'Plainproof'
 Pillow 13, Playwright 1.64.1, `openai`, `ffmpeg`, and `ffprobe` must be available.
 Listen to the voice check. Install the Ava Premium voice in macOS if needed.
 No libass, drawtext, FreeType, or subtitle support is needed in ffmpeg. All text
-is rendered with Pillow. The only video filters used are scale, pad, setpts,
-concat, and overlay; audio is assembled as padded PCM using Python's wave module.
+is rendered with Pillow. The only video filters used are scale, crop, pad, setpts,
+concat, and overlay; verification also uses silencedetect; audio is assembled as padded PCM using Python's wave module.
 
 Use a font with Latin punctuation and arrows. `--font /path/to/font.ttf` overrides
 this default search order: `/System/Library/Fonts/Helvetica.ttc`,
@@ -37,7 +37,7 @@ that terminal's environment privately using your existing workflow. Do this off
 camera. The following command does not set, print, or copy the credential:
 
 ```sh
-python -m plainproof serve --port 0 --out runs/demo-real
+python -m plainproof serve --port 0 --timeout-s 420 --out runs/demo-real
 ```
 
 Port `0` asks the OS for a free loopback port. Copy the printed URL, for example
@@ -64,8 +64,8 @@ python demo_video/record.py \
 Do not pass `--mock` for the real take. Both paid web runs use the selected
 muse-spark-1.3 model, clear Offline demo, and enable local confirmation approval.
 The server handles the credential independently. The recorder waits up to seven
-minutes for each receipt; the repository's server run budget is currently 180
-seconds. It does not change this budget or retry paid runs automatically.
+minutes for each receipt; `serve --timeout-s 420` sets the web run budget to
+match. The recorder does not retry paid runs automatically.
 
 The recorder opens one headless 1280×900 page, types at 35 ms per key, records
 receipts, executes the replay, and creates the explicitly offline no-op control
@@ -117,7 +117,7 @@ there is no separate server `--offline` switch. `--mock` on the recorder keeps
 the UI's Offline demo checked for both runs.
 
 ```sh
-python -m plainproof serve --port 0 --out runs/demo-mock
+python -m plainproof serve --port 0 --timeout-s 420 --out runs/demo-mock
 # In another credential-free terminal, use its printed URL:
 python demo_video/record.py --base http://127.0.0.1:54321 \
   --web-out runs/demo-mock --repo . --mock --out demo_video/recordings/mock-take-01
@@ -126,7 +126,8 @@ python demo_video/assemble.py \
   --events demo_video/recordings/mock-take-01/events.json \
   --tts demo_video/tts/manifest.json --out demo_video/demo-mock.mp4 --mock-watermark
 python demo_video/verify.py --video demo_video/demo-mock.mp4 \
-  --timeline demo_video/timeline.json --frames demo_video/test_frames
+  --timeline demo_video/timeline.json --frames demo_video/test_frames \
+  --expect-narration-timeline
 python -m tests.run_tests
 ```
 
@@ -152,7 +153,7 @@ on every frame, including cards, and mock run badges do not claim real API use.
 - Confirm the offline negative control shows INCONCLUSIVE / marker_never_seen
   with both final checks true. It must stay labelled as offline in a real video.
 - Check `verification.json`, the six extracted frames, and timeline.json. The
-  verifier examines all eight scenes; it saves the six action/evidence scenes.
+  verifier examines all eight scenes; it saves six frames at fully zoomed evidence moments.
   ffprobe must report 170–180 seconds, 1920×1080, 30 fps, H.264 with AAC audio.
 - Check no personal information appears in paths or footage. Keep exact receipts
   and raw recordings privately. No tool captures terminal history or reads a
@@ -163,3 +164,30 @@ The Linux rehearsal cannot establish the real Meta plan/replay compatibility,
 Mac say voice quality, or the exact rendering of your installed Mac fonts.
 Those are the remaining real-run checks. The hackathon/date statements come
 verbatim from DEMO_SCRIPT.md; no repair feature or simulated repair is added.
+
+## Evidence focus and silence checks
+
+The receipt uses stable `#verdict`, `#checks`, `#steps`, `#plan`, and
+`#run-details` sections. Checkpoint rows carry `data-check-id` and `data-source`;
+steps carry `data-step`. The recorder locates counter expectations by their
+literal text, so real planner IDs can differ from the mock IDs. After scrolling,
+every inspection records its viewport rectangle, padded by 24 pixels and clipped
+to the viewport, plus start/end times in `events.json` under `focus`.
+
+Assembly maps those intervals into `timeline.json`, grows each rectangle to
+16:9, and applies a 0.4-second cosine ease in six crop/scale steps before
+the Pillow overlays. The final evidence stays zoomed through any held frame. Captions and badges stay fixed and readable while the
+receipt zooms. Typing and evidence stay at normal speed; waiting is accelerated.
+The 175-second cut distributes narration pauses throughout each scene, starts
+speech over the title, and ends speech at the final six-second closing card.
+It fails early if a take or voice cannot fit without a gap over four seconds.
+Existing DEMO_SCRIPT.md lines remain verbatim; factual additions live in
+narration.json with scene IDs.
+
+For real audio, run verify.py **without** `--expect-narration-timeline`.
+It runs `silencedetect=noise=-45dB:d=0.05` and fails if any silence longer than
+4.0 seconds starts before the closing card. The fallback rehearsal flag checks
+planned caption coverage instead, since fallback WAVs may contain only silence;
+the report still includes the measured audio's longest silence so it cannot be
+mistaken for a real voice check. Both modes require the evidence focus intervals
+in timeline.json and save six zoomed evidence frames.

@@ -15,6 +15,7 @@ from plainproof.common import app_server
 from plainproof.judge import evaluate
 from plainproof.mocks import MockOperator, mock_plan
 from plainproof.planner import validate_plan
+from plainproof.receipt import action_text, write as write_receipt
 from plainproof.replay import replay
 from plainproof.runner import Config, run
 from web.server import make_server
@@ -180,6 +181,7 @@ async def suite():
                 await browser.close()
     print('PASS foreign-origin requests blocked; confirmations restricted to exact local app pages')
     await asyncio.to_thread(web_smoke)
+    await receipt_browser()
     await web_browser()
     cli_args = [sys.executable, '-m', 'plainproof', 'check', '--app-dir', str(ROOT / 'demo_app/bug_reload'),
                 '--requirement', RELOAD, '--out', str(OUT / 'cli-before'), '--mock']
@@ -241,6 +243,78 @@ def web_smoke():
     finally:
         server.shutdown(); server.server_close(); thread.join()
     print('PASS loopback web UI: POST -> live SSE screenshots/steps -> FAIL -> receipt; cross-origin POST denied')
+
+
+async def receipt_browser():
+    # Exercise the HTML as a standalone file, with arbitrary planner IDs,
+    # count checks and HTML-sensitive literals as well as actual run receipts.
+    fixture = OUT / 'receipt-format'
+    shutil.copytree(OUT / 'delete-counter', fixture)
+    data = json.loads((fixture / 'receipt.json').read_text())
+    check = dict(id='planner-custom-42', kind='text_count', text='<literal>&', count=2, when='end')
+    data['check_results'] = [dict(check=check, source='end', checkpoint='cp-custom', passed=True,
+        actual_count=2, evidence='<literal>& <literal>&', covered=True)]
+    data['requirement'] = 'Count <literal>& twice.'
+    assert write_receipt(fixture, data) == data
+    assert json.loads((fixture / 'receipt.json').read_text()) == data
+    assert action_text(dict(type='click', x=421, y=164)) == 'click at (421, 164)'
+    assert action_text(dict(type='type', text='check-example')) == 'type check-example'
+    assert action_text(dict(type='keypress', keys=['F5'])) == 'press F5 → reload'
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page(viewport={'width':1280, 'height':900})
+            for path in sorted(OUT.glob('*/receipt.html')):
+                receipt = json.loads(path.with_suffix('.json').read_text())
+                await page.goto(path.as_uri())
+                for name in ('verdict', 'checks', 'steps', 'plan', 'run-details'):
+                    assert await page.locator('#'+name).count() == 1, path
+                banner = await page.locator('#verdict').inner_text()
+                assert receipt['requirement'] in banner
+                assert (receipt['verdict'] if receipt['verdict'] != 'stopped_safety_check' else 'STOPPED') in banner
+                if receipt.get('verdict_reason') == 'marker_never_seen':
+                    assert 'marker never appeared in visible page text' in banner
+                rows = page.locator('#checks tbody tr')
+                assert await rows.count() == len(receipt['check_results'])
+                for i, result in enumerate(receipt['check_results']):
+                    row = rows.nth(i)
+                    assert await row.get_attribute('data-check-id') == result['check']['id']
+                    assert await row.get_attribute('data-source') == result.get('source', 'missing')
+                    assert await row.locator('mark').count() >= 1
+                    assert await row.locator('mark').first.inner_text() == result['check']['text']
+                    assert float(await row.evaluate('el => parseFloat(getComputedStyle(el).fontSize)')) >= 20
+                steps = page.locator('#steps [data-step]')
+                assert await steps.count() == len(receipt['steps'])
+                for i, step in enumerate(receipt['steps']):
+                    item = steps.nth(i)
+                    assert await item.get_attribute('data-step') == str(i+1)
+                    text = await item.inner_text()
+                    assert 'marker_seen: '+str(step.get('marker_seen', False)).lower() in text
+                    assert 'Acknowledged confirmations: '+str(len(step.get('acknowledgements', []))) in text
+                    for action in step['executed']:
+                        assert action_text(action) in text
+                task = (receipt.get('resolved_plan') or receipt.get('planner_output') or {}).get('agent_task')
+                if task:
+                    assert task == await page.locator('#plan p').inner_text()
+                assert await page.locator('pre:not(details pre)').count() == 0
+                assert await page.locator('details[open]').count() == 0
+                assert json.loads(await page.locator('#raw pre').text_content()) == receipt
+                assert await page.locator('body > :last-child').get_attribute('id') == 'raw'
+                # Both thumbnail and full checkpoint PNGs decode offline.
+                await page.wait_for_function('[...document.images].every(i => i.complete && i.naturalWidth > 0)')
+                assert await page.locator('img:not([src^="data:image/png,"])').count() == 0
+                assert 'base64' not in path.with_suffix('.json').read_text()
+                if receipt.get('mode') == 'replay':
+                    details = await page.locator('#run-details').inner_text()
+                    assert 'Model calls: 0' in details and 'USD 0' in details
+                    assert 'original verdict: '+receipt['original_verdict'] in details
+                    assert await page.locator('#run-details a').get_attribute('href') == receipt['original_receipt_html']
+            await page.goto((fixture / 'receipt.html').as_uri())
+            assert 'count = 2: <literal>&' in await page.locator('#checks').inner_text()
+            assert await page.locator('#checks mark').count() == 2
+        finally:
+            await browser.close()
+    print('PASS standalone receipts: readable banners/checks/timelines; escaped literal highlights; collapsed raw JSON; embedded PNGs decode')
 
 
 async def web_browser():
