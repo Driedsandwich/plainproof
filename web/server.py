@@ -27,7 +27,7 @@ class Job:
             self.condition.notify_all()
 
 
-def make_server(port=8765, out='runs'):
+def make_server(port=8765, out='runs', timeout_s=180):
     output = Path(out).resolve()
     output.mkdir(parents=True, exist_ok=True)
     jobs, lock = {}, threading.Lock()
@@ -79,7 +79,8 @@ def make_server(port=8765, out='runs'):
                 jobs[run_id] = job
             config = Config(out=str(output / run_id), app_dir=str(ROOT / 'demo_app' / variant),
                             requirement=requirement, model=body.get('model', 'muse-spark-1.3'),
-                            mock=body.get('mock', True), approve_confirmations=body.get('approve_confirmations', False))
+                            mock=body.get('mock', True), approve_confirmations=body.get('approve_confirmations', False),
+                            timeout_s=timeout_s)
             def work():
                 try:
                     asyncio.run(run(config, job.emit))
@@ -129,7 +130,9 @@ def make_server(port=8765, out='runs'):
                 return self.send(200, (ROOT / 'web/index.html').read_bytes(), 'text/html; charset=utf-8')
             if path.startswith('/runs/'):
                 parts = path.split('/')[2:]
-                if len(parts) < 2 or parts[0] not in jobs:
+                # CLI replay/control receipts live beside web jobs and remain
+                # viewable after a restart. Preserve live job screenshot access.
+                if len(parts) < 2 or (parts[0] not in jobs and not (output / parts[0] / 'receipt.json').is_file()):
                     return self.send(404, b'{}')
                 target = (output / Path(*parts)).resolve()
                 if output not in target.parents or not target.is_file():
@@ -139,8 +142,8 @@ def make_server(port=8765, out='runs'):
     return ThreadingHTTPServer(('127.0.0.1', port), Handler)
 
 
-def serve(port=8765, out='runs'):
-    server = make_server(port, out)
+def serve(port=8765, out='runs', timeout_s=180):
+    server = make_server(port, out, timeout_s)
     print(f'Plainproof: http://127.0.0.1:{server.server_port} (Ctrl+C to stop)', flush=True)
     try:
         server.serve_forever()

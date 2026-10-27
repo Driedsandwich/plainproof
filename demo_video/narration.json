@@ -1,0 +1,54 @@
+[
+  {
+    "scene": "intro",
+    "text": "People directing AI coding agents may not be able to audit code, but they can say what their app must do."
+  },
+  {
+    "scene": "intro",
+    "text": "Plainproof tests that requirement and gives them evidence they can inspect."
+  },
+  {
+    "scene": "run_fail",
+    "text": "I choose the broken counter app and type the behavior I need. This is a real Meta Model API run, with generic confirmations approved only for this local app."
+  },
+  {
+    "scene": "run_fail",
+    "text": "Muse Spark 1.3 plans structured checks, then uses the native computer tool to operate the browser. Screenshots and steps arrive as it works."
+  },
+  {
+    "scene": "receipt_fail",
+    "text": "The model does not decide success. The counter still says ‘1 items left,’ and Python's page-text checks return FAIL."
+  },
+  {
+    "scene": "receipt_fail",
+    "text": "The receipt exposes the checks the planner chose and the evidence from an independent reload. You can inspect what PASS or FAIL actually means."
+  },
+  {
+    "scene": "replay",
+    "text": "Now I switch to the correct app. Replay is a CLI operation today: I reuse the failing receipt's executed actions and checks against this version."
+  },
+  {
+    "scene": "replay_receipt",
+    "text": "The same recorded test now passes. Replay makes zero model calls and costs zero dollars in model usage. It repeats the recorded coordinates; it does not ask a model to try again."
+  },
+  {
+    "scene": "live_new",
+    "text": "Here is a new requirement, typed live: add one item, delete it, and leave zero items."
+  },
+  {
+    "scene": "live_new",
+    "text": "It passes after the item appears and is deleted. The receipt records that the marker was actually seen before it vanished."
+  },
+  {
+    "scene": "guard_control",
+    "text": "This offline no-op control has the same passing final checks, but never creates the item. The marker guard makes it inconclusive, preventing a vacuous pass."
+  },
+  {
+    "scene": "closing",
+    "text": "Everything shown was built for this hackathon, starting October 27, including the day-one harness. Next, I want Muse Code to fix the app from the failing receipt."
+  },
+  {
+    "scene": "closing",
+    "text": "That repair loop is not built yet. Today, Plainproof provides the checks, evidence, and model-free replay."
+  }
+]

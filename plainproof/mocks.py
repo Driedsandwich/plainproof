@@ -63,7 +63,9 @@ class MockOperator:
             assert result['acknowledged_safety_checks'] == self.last_checks
             assert result['output']['image_url'].startswith('data:image/png;base64,')
         actions = None
-        if n == 0:
+        if self.safety == 'noop':
+            actions = [dict(type='wait')] if n == 0 else None
+        elif n == 0:
             actions = [await self.click('#todo-input'), dict(type='type', text=self.marker),
                        dict(type='keypress', keys=['Enter'])]
         elif n == 1 and self.safety != 'never_reload':

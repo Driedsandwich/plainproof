@@ -4,3 +4,13 @@ __pycache__/
 runs/
 test-artifacts/
 .env
+demo_video/recordings/
+demo_video/tts/
+demo_video/*_assets/
+demo_video/*.mp4
+demo_video/*.webm
+demo_video/real_frames/
+demo_video/test_frames/
+demo_video/demo.srt
+demo_video/timeline.json
+demo_video/verification.json

@@ -1,0 +1,3 @@
+# Install requirements.txt as well for the server and CLI.
+Pillow>=13,<14
+playwright>=1.64,<2

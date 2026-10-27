@@ -17,7 +17,7 @@ def main():
     check.add_argument('--model', choices=sorted(PRICES), default='muse-spark-1.3')
     check.add_argument('--approve-confirmations', action='store_true')
     check.add_argument('--mock', action='store_true')
-    check.add_argument('--mock-scenario', choices=['normal', 'safety', 'confirm', 'never_reload', 'invalid_plan'], default='normal')
+    check.add_argument('--mock-scenario', choices=['normal', 'safety', 'confirm', 'never_reload', 'invalid_plan', 'noop'], default='normal')
     rep = sub.add_parser('replay')
     rep.add_argument('receipt_dir')
     source = rep.add_mutually_exclusive_group(required=True)
@@ -31,12 +31,13 @@ def main():
     serve = sub.add_parser('serve')
     serve.add_argument('--port', type=int, default=8765)
     serve.add_argument('--out', default='runs')
+    serve.add_argument('--timeout-s', type=float, default=180, help='time budget per web run')
     args = parser.parse_args()
     values = vars(args).copy()
     command = values.pop('command')
     if command == 'serve':
         from web.server import serve
-        serve(args.port, args.out)
+        serve(args.port, args.out, args.timeout_s)
         return
     receipt_dir = values.pop('receipt_dir', None)
     config = Config(**values)

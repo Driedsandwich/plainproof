@@ -102,6 +102,12 @@ async def suite():
         assert r['steps'][0]['marker_seen'] is False
         assert 'marker_never_seen' in (OUT / 'delete-noop/receipt.html').read_text()
         print('PASS no-op delete: all final checks true => INCONCLUSIVE / marker_never_seen; reason in HTML')
+        cli_control = await run(config('delete-noop-cli', requirement=DELETE, mock_scenario='noop'))
+        assert cli_control['verdict'] == r['verdict']
+        assert cli_control['verdict_reason'] == r['verdict_reason']
+        assert all(c['passed'] for c in cli_control['check_results'])
+        assert not any(s.get('marker_seen') for s in cli_control['steps'])
+        print('PASS CLI noop scenario matches the no-op delete test operator')
         r = await replay(OUT / 'delete-noop', config('replay-delete-noop'))
         assert r['verdict'] == 'INCONCLUSIVE' and r['verdict_reason'] == 'marker_never_seen'
         assert r['model_calls'] == {'planner': 0, 'operator': 0} and r['usd'] == 0
@@ -212,6 +218,20 @@ def web_smoke():
         assert '"type": "screenshot"' in events and '"type": "step"' in events
         assert '"verdict": "FAIL"' in events
         assert b'Plainproof' in request('/runs/' + run_id + '/receipt.html').read()
+        # CLI-generated receipts have no in-memory web job. They must be served
+        # from the same output root, including after server restarts.
+        saved = OUT / 'web' / 'replay-saved'
+        saved.mkdir()
+        (saved / 'receipt.json').write_text('{}')
+        (saved / 'receipt.html').write_text('saved CLI receipt')
+        assert request('/runs/replay-saved/receipt.html').read() == b'saved CLI receipt'
+        for path in ('/runs/../receipt.html', '/runs/replay-saved/../../delete-noop/receipt.html'):
+            try:
+                request(path)
+            except urllib.error.HTTPError as error:
+                assert error.code == 404
+            else:
+                raise AssertionError('Receipt path escaped web output root')
         try:
             request('/api/run', body, {'Content-Type': 'application/json', 'Origin': 'https://foreign.invalid'})
         except urllib.error.HTTPError as error:
