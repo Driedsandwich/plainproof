@@ -32,7 +32,6 @@ const list = document.querySelector('#items');
 let items = JSON.parse(localStorage.getItem('todos') || '[]');
 function save() { localStorage.setItem('todos', JSON.stringify(items)); }
 function render() {
-  // PLANTED BUG: completed items still count as unfinished.
   document.querySelector('#counter').textContent = `${items.length} items left`;
   list.replaceChildren(...items.map((item, index) => {
     const li = document.createElement('li');

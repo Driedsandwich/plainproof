@@ -89,3 +89,26 @@ class MockOperator:
             self.last_checks = checks
             output = [dict(type='computer_call', call_id=f'call-{n}', actions=actions, pending_safety_checks=checks)]
         return dict(id=f'mock-{n}', output=output, usage={})
+
+
+class MockSparkFixer:
+    """One-edit fixes grounded in the actual demo source, through Spark's protocol."""
+    async def create(self, **request):
+        context = json.loads(request['input'][0]['content'][0]['text'])
+        files = {f['path']: f['text'] for f in context['app_files']}
+        text = files.get('index.html', '')
+        if "items.push({text, done: false});\n  input.value = '';" in text:
+            find = "items.push({text, done: false});\n  input.value = '';"
+            replace = "items.push({text, done: false});\n  save();\n  input.value = '';"
+            diagnosis = 'New items are rendered but never saved to localStorage.'
+        elif '${items.length} items left' in text:
+            find, replace = '${items.length} items left', '${items.filter(item => !item.done).length} items left'
+            diagnosis = 'The counter includes completed items instead of only unfinished items.'
+        else:
+            # A valid edit without a behavioral change is useful as a negative control.
+            find, replace = '<!doctype html>', '<!doctype html>\n<!-- mock: no behavioral change -->'
+            diagnosis = 'No known demo bug found; this mock edit does not change behavior.'
+        proposal = dict(diagnosis=diagnosis, edits=[dict(path='index.html', find=find, replace=replace)],
+                        risk='Limited to this demo and the recorded checks.')
+        return dict(id='mock-fixer', output=[dict(type='message', content=[
+            dict(type='output_text', text=json.dumps(proposal))])], usage={})

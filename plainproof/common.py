@@ -2,6 +2,7 @@
 import base64
 import functools
 import os
+import re
 import threading
 from contextlib import contextmanager
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -49,13 +50,16 @@ def cost(model, usage):
 
 def redact(value):
     """Defense in depth for user/model strings; never serialize the credential."""
-    secret = os.environ.get('MODEL_API_KEY')
     if isinstance(value, str):
-        return value.replace(secret, '[REDACTED]') if secret else value
+        for name in ('MODEL_API_KEY', 'META_API_KEY'):
+            secret = os.environ.get(name)
+            if secret:
+                value = value.replace(secret, '[REDACTED]')
+        return re.sub(r'data:image/[^\s"\']+;base64,[A-Za-z0-9+/=]+', '[IMAGE REMOVED]', value)
     if isinstance(value, list):
         return [redact(v) for v in value]
     if isinstance(value, dict):
-        return {k: redact(v) for k, v in value.items()}
+        return {redact(k): redact(v) for k, v in value.items()}
     return value
 
 

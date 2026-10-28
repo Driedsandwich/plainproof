@@ -56,7 +56,6 @@ document.querySelector('#add-form').addEventListener('submit', event => {
   const text = input.value.trim();
   if (!text) return;
   items.push({text, done: false});
-  // PLANTED BUG: skip saving newly added items.
   input.value = '';
   render();
 });

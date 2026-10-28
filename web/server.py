@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from plainproof.common import redact
 from plainproof.runner import Config, run
+from plainproof.repair import repair
 
 ROOT = Path(__file__).resolve().parent.parent
 VARIANTS = {'correct', 'bug_reload', 'bug_counter'}
@@ -55,35 +56,55 @@ def make_server(port=8765, out='runs', timeout_s=180):
             host = self.headers.get('Host', '')
             if not self.trusted() or self.headers.get('Origin') not in {None, f'http://{host}'}:
                 return self.send(403, b'{}')
-            if self.path != '/api/run':
+            if self.path not in {'/api/run', '/api/repair'}:
                 return self.send(404, b'{}')
             try:
                 length = int(self.headers.get('Content-Length', '0'))
                 if not 0 < length <= 16000 or self.headers.get_content_type() != 'application/json':
                     raise ValueError()
                 body = json.loads(self.rfile.read(length))
-                variant, requirement = body['variant'], body['requirement']
-                if variant not in VARIANTS or not isinstance(requirement, str) or not requirement.strip():
-                    raise ValueError()
-                if body.get('model', 'muse-spark-1.3') not in {'muse-spark-1.3', 'muse-wonder-1.0'}:
-                    raise ValueError()
-                for key in ('mock', 'approve_confirmations'):
-                    if key in body and type(body[key]) is not bool:
+                is_repair = self.path == '/api/repair'
+                if is_repair:
+                    with lock:
+                        original_job = jobs.get(body['receipt_id'])
+                    if original_job is None or not original_job.done or original_job.kind != 'check':
                         raise ValueError()
-            except (ValueError, KeyError, TypeError):
+                    previous = original_job.config
+                    receipt = json.loads((Path(previous.out) / 'receipt.json').read_text())
+                    if receipt['verdict'] != 'FAIL':
+                        raise ValueError()
+                else:
+                    variant, requirement = body['variant'], body['requirement']
+                    if variant not in VARIANTS or not isinstance(requirement, str) or not requirement.strip():
+                        raise ValueError()
+                    if body.get('model', 'muse-spark-1.3') not in {'muse-spark-1.3', 'muse-wonder-1.0'}:
+                        raise ValueError()
+                    for key in ('mock', 'approve_confirmations'):
+                        if key in body and type(body[key]) is not bool:
+                            raise ValueError()
+            except (ValueError, KeyError, TypeError, OSError):
                 return self.send(400, b'{"error":"Invalid run request"}')
             if not capacity.acquire(blocking=False):
                 return self.send(409, b'{"error":"A run is already active"}')
             run_id, job = secrets.token_hex(8), Job()
+            job.kind = 'repair' if is_repair else 'check'
+            if is_repair:
+                # Use the source job's app and offline mode, never new UI selections.
+                config = Config(out=str(output / run_id), app_dir=previous.app_dir,
+                                mock=previous.mock, approve_confirmations=previous.approve_confirmations,
+                                timeout_s=timeout_s)
+            else:
+                config = Config(out=str(output / run_id), app_dir=str(ROOT / 'demo_app' / variant),
+                                requirement=requirement, model=body.get('model', 'muse-spark-1.3'),
+                                mock=body.get('mock', True), approve_confirmations=body.get('approve_confirmations', False),
+                                timeout_s=timeout_s)
+            job.config = config
             with lock:
                 jobs[run_id] = job
-            config = Config(out=str(output / run_id), app_dir=str(ROOT / 'demo_app' / variant),
-                            requirement=requirement, model=body.get('model', 'muse-spark-1.3'),
-                            mock=body.get('mock', True), approve_confirmations=body.get('approve_confirmations', False),
-                            timeout_s=timeout_s)
             def work():
                 try:
-                    asyncio.run(run(config, job.emit))
+                    asyncio.run(repair(previous.out, config, on_event=job.emit) if is_repair
+                                else run(config, job.emit))
                 except Exception as exc:
                     job.emit({'type': 'error', 'message': type(exc).__name__})
                 finally:
@@ -132,7 +153,8 @@ def make_server(port=8765, out='runs', timeout_s=180):
                 parts = path.split('/')[2:]
                 # CLI replay/control receipts live beside web jobs and remain
                 # viewable after a restart. Preserve live job screenshot access.
-                if len(parts) < 2 or (parts[0] not in jobs and not (output / parts[0] / 'receipt.json').is_file()):
+                if len(parts) < 2 or (parts[0] not in jobs and not any(
+                        (output / parts[0] / name).is_file() for name in ('receipt.json', 'repair.json'))):
                     return self.send(404, b'{}')
                 target = (output / Path(*parts)).resolve()
                 if output not in target.parents or not target.is_file():

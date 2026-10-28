@@ -12,8 +12,11 @@ textarea{height:140px;resize:vertical}button{background:#15594c;color:white;curs
 .inline{display:flex;gap:10px;align-items:flex-start}.inline input{margin-top:5px}small{color:#49615d}img{width:100%;background:#e7ece8;border:1px solid #cbd4d3;border-radius:6px;min-height:180px}
 #status{font-weight:650;margin:0 0 16px}li{padding:8px 0;font-size:14px;overflow-wrap:anywhere}a{color:#15594c}
 #plan{white-space:pre-wrap;font-size:14px}#receipt{display:block;margin:12px 0}@media(max-width:800px){main{grid-template-columns:1fr}}
+#repair-banner{padding:20px;border-left:8px solid #ac7100;background:#fff3d6;font-size:32px}
+#repair-banner.fixed{border-color:#167345;background:#e5f5ed}#repair-banner.failed{border-color:#bb2438;background:#ffebee}
+#repair-diff{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}.added{color:#075431;background:#d3f4e2}.removed{color:#8e1426;background:#ffe0e5}
 </style>
-<header><small>PLAINPROOF / STAGE 1</small><h1>Proof before you accept.</h1><p>Describe what should work. Watch the app run. Inspect the evidence.</p></header>
+<header><small>PLAINPROOF / STAGE 3</small><h1>Proof before you accept.</h1><p>Describe what should work. Watch the app run. Inspect the evidence.</p></header>
 <main><form id="run-form">
 <label for="variant">Demo app</label><select id="variant"><option value="bug_reload">Bug: new items vanish on reload</option><option value="bug_counter">Bug: completed items still counted</option><option value="correct">Correct</option></select>
 <label for="requirement">Your requirement</label><textarea id="requirement" required>A new to-do is still in the list after I reload the page.</textarea>
@@ -21,9 +24,10 @@ textarea{height:140px;resize:vertical}button{background:#15594c;color:white;curs
 <label class="inline"><input id="mock" type="checkbox" checked><span>Offline demo <small>— no API calls</small></span></label>
 <label class="inline"><input id="approve" type="checkbox"><span>Approve generic computer confirmations for this local app only</span></label>
 <button id="run">Run proof</button><p><small>The planner chooses checks. Code evaluates visible page text. Every run includes an audit reload.</small></p>
-</form><section><p id="status" role="status">Ready to run</p><a id="receipt" hidden>Open receipt</a><img id="screen" alt="Latest browser viewport" hidden><p id="plan"></p><h2>Steps</h2><ol id="steps"></ol></section></main>
+</form><section><p id="status" role="status">Ready to run</p><a id="receipt" hidden>Open receipt</a><button type="button" id="repair" hidden>Propose a fix</button><section id="repair-result" hidden><h2 id="repair-banner"></h2><p id="repair-diagnosis"></p><pre id="repair-diff"></pre><p><a id="repair-original">Original FAIL receipt</a> · <a id="repair-replay" hidden>Replay receipt</a></p></section><img id="screen" alt="Latest browser viewport" hidden><p id="plan"></p><h2>Steps</h2><ol id="steps"></ol></section></main>
 <script>
 const $ = id => document.getElementById(id);
+let failedRun = null;
 const actionLabel = a => {
  if(a.type === 'type') return 'Type “' + a.text + '”';
  if(a.type === 'keypress') return 'Press ' + a.keys.join('+');
@@ -32,7 +36,7 @@ const actionLabel = a => {
 };
 $('variant').onchange = () => { $('requirement').value = $('variant').value === 'bug_counter' ? 'After I add one to-do and mark it done, the counter decreases to 0 items left.' : 'A new to-do is still in the list after I reload the page.'; };
 $('run-form').onsubmit = async event => {
- event.preventDefault(); $('run').disabled = true; $('receipt').hidden = true; $('steps').replaceChildren(); $('plan').textContent = ''; $('status').textContent = 'Starting…';
+ event.preventDefault(); failedRun = null; $('repair').hidden = true; $('repair-result').hidden = true; $('run').disabled = true; $('receipt').hidden = true; $('steps').replaceChildren(); $('plan').textContent = ''; $('status').textContent = 'Starting…';
  try {
   const response = await fetch('/api/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({variant:$('variant').value,requirement:$('requirement').value,model:$('model').value,mock:$('mock').checked,approve_confirmations:$('approve').checked})});
   const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Run could not start');
@@ -43,11 +47,36 @@ $('run-form').onsubmit = async event => {
    if(e.type === 'status') $('status').textContent = e.message;
    if(e.type === 'plan'){ $('plan').textContent = e.plan.agent_task; $('status').textContent = 'Operating the app…'; }
    if(e.type === 'step'){ const li=document.createElement('li'); li.textContent = e.step.executed.map(actionLabel).join(' → ') + (e.step.errors.length ? ' · error' : ''); $('steps').append(li); }
-   if(e.type === 'done'){ $('status').textContent = e.verdict; $('receipt').href = base + e.receipt; $('receipt').hidden = false; $('run').disabled = false; stream.close(); }
+   if(e.type === 'done'){ $('status').textContent = e.verdict; $('receipt').href = base + e.receipt; $('receipt').hidden = false; $('run').disabled = false; failedRun = e.verdict === 'FAIL' ? result.id : null; $('repair').hidden = !failedRun; $('repair').disabled = false; stream.close(); }
    if(e.type === 'error'){ $('status').textContent = 'ERROR · ' + e.message; $('run').disabled = false; stream.close(); }
   };
   stream.onerror = () => { $('status').textContent = 'Connection interrupted; reconnecting…'; };
  } catch(error) { $('status').textContent = error.message; $('run').disabled = false; }
+};
+$('repair').onclick = async () => {
+ $('repair').disabled = true; $('run').disabled = true; $('status').textContent = 'Starting repair…';
+ try {
+  const response = await fetch('/api/repair', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({receipt_id:failedRun})});
+  const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Repair could not start');
+  const base = '/runs/' + result.id + '/', stream = new EventSource('/events/' + result.id);
+  stream.onmessage = ({data}) => {
+   const e = JSON.parse(data);
+   if(e.type === 'status') $('status').textContent = e.message;
+   if(e.type === 'done'){
+    $('status').textContent = e.verdict; $('repair-banner').textContent = e.verdict;
+    $('repair-banner').className = e.verdict === 'FIXED' ? 'fixed' : e.verdict === 'NOT_FIXED' ? 'failed' : '';
+    $('repair-diagnosis').textContent = e.diagnosis; $('repair-diff').replaceChildren();
+    for(const line of (e.diff || '').split('\n')) { const span = document.createElement('span'); span.className = line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : ''; span.textContent = line + '\n'; $('repair-diff').append(span); }
+    $('repair-original').href = base + e.original_receipt; $('repair-replay').hidden = !e.replay_receipt;
+    if(e.replay_receipt) $('repair-replay').href = base + e.replay_receipt;
+    if(e.screenshot){ $('screen').src = base + e.screenshot; $('screen').alt = 'Patched app after recorded replay'; $('screen').hidden = false; }
+    $('repair-result').hidden = false; $('receipt').href = base + e.receipt; $('receipt').hidden = false;
+    $('run').disabled = false; $('repair').hidden = true; stream.close();
+   }
+   if(e.type === 'error'){ $('status').textContent = 'ERROR · ' + e.message; $('run').disabled = false; $('repair').disabled = false; stream.close(); }
+  };
+  stream.onerror = () => { $('status').textContent = 'Connection interrupted; reconnecting…'; };
+ } catch(error) { $('status').textContent = error.message; $('run').disabled = false; $('repair').disabled = false; }
 };
 </script>
 </html>

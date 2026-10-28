@@ -24,7 +24,15 @@ def main():
     source.add_argument('--app-dir')
     source.add_argument('--app-url')
     rep.add_argument('--mock', action='store_true', help='Accepted for convenience; replay always makes zero model calls')
-    for cmd in (check, rep):
+    fix = sub.add_parser('repair')
+    fix.add_argument('receipt_dir')
+    fix.add_argument('--app-dir', required=True)
+    fix.add_argument('--model', choices=sorted(PRICES), default='muse-spark-1.3')
+    fix.add_argument('--fixer', choices=['spark', 'muse-code'], default='spark')
+    fix.add_argument('--fresh-check', action='store_true')
+    fix.add_argument('--approve-confirmations', action='store_true')
+    fix.add_argument('--mock', action='store_true')
+    for cmd in (check, rep, fix):
         cmd.add_argument('--out', required=True)
         cmd.add_argument('--max-steps', type=int, default=25)
         cmd.add_argument('--timeout-s', type=float, default=180)
@@ -40,14 +48,20 @@ def main():
         serve(args.port, args.out, args.timeout_s)
         return
     receipt_dir = values.pop('receipt_dir', None)
+    fixer, fresh_check = values.pop('fixer', 'spark'), values.pop('fresh_check', False)
     config = Config(**values)
     if config.max_steps < 1 or config.timeout_s <= 0:
         parser.error('Step and time budgets must be positive')
     if not config.mock and config.mock_scenario != 'normal':
         parser.error('--mock-scenario requires --mock')
     try:
-        result = asyncio.run(run(config) if command == 'check' else replay(receipt_dir, config))
+        if command == 'repair':
+            from .repair import repair
+            task = repair(receipt_dir, config, fixer=fixer, fresh_check=fresh_check)
+        else:
+            task = run(config) if command == 'check' else replay(receipt_dir, config)
+        result = asyncio.run(task)
     except Exception as exc:
         parser.exit(2, f'Run setup failed ({type(exc).__name__}); check arguments and use a fresh --out directory.\n')
-    print(f"{result['verdict']} ({result['stop_reason']}); artifacts: {args.out}")
-    raise SystemExit({'PASS': 0, 'FAIL': 1}.get(result['verdict'], 2))
+    print(f"{result['verdict']} ({result.get('reason') or result.get('stop_reason', 'replay decides')}); artifacts: {args.out}")
+    raise SystemExit({'PASS': 0, 'FAIL': 1, 'FIXED': 0, 'NOT_FIXED': 1}.get(result['verdict'], 2))
