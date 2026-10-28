@@ -4,8 +4,13 @@ import subprocess
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SCENES = ('intro', 'run_fail', 'receipt_fail', 'replay', 'replay_receipt',
-          'live_new', 'guard_control', 'closing')
+# Shared by the script, assembler and verifier. Title precedes intro footage.
+SCENE_TIMES = {'intro': (4, 20), 'run_fail': (20, 53),
+               'receipt_fail': (53, 78), 'repair': (78, 120),
+               'live_new': (120, 148), 'guard_control': (148, 169)}
+SCENES = tuple(SCENE_TIMES)
+TOTAL = 175
+CLOSING_START = 169
 FONTS = ('/System/Library/Fonts/Helvetica.ttc', '/System/Library/Fonts/SFNS.ttf',
          '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
 

@@ -5,7 +5,7 @@ import re
 import subprocess
 import tempfile
 from PIL import Image, ImageStat
-from common import HERE, SCENES, probe, read, write, coverage_gaps
+from common import HERE, SCENES, SCENE_TIMES, probe, read, write, coverage_gaps
 
 
 def measured_silence(video, end):
@@ -54,7 +54,8 @@ def main():
     assert audio['codec_name']=='aac' and int(audio['sample_rate'])==48000
     assert 170 <= seconds <= 180
     timeline = read(args.timeline)
-    assert [s['scene'] for s in timeline['scenes']]==list(SCENES)
+    assert [(s['scene'], s['start'], s['end']) for s in timeline['scenes']]==[
+        (scene, *SCENE_TIMES[scene]) for scene in SCENES]
     assert abs(timeline['duration']-seconds) < .1
     assert abs(timeline['closing_card']['end']-timeline['closing_card']['start']-6) < .001
     for segment in timeline['segments']:
@@ -62,26 +63,26 @@ def main():
             assert segment['speed_factor']==1
     for c in timeline['captions']:
         assert 0 <= c['start'] < c['end'] <= timeline['closing_card']['start']+.001
-    # Additions may appear between original lines, but every original word must
-    # remain verbatim and in order. The rendered timeline must match narration.json.
+    # Every spoken table cell must match the complete narration, in order.
+    # The silent closing-card row deliberately has no quoted narration.
     script = (HERE.parent / 'DEMO_SCRIPT.md').read_text()
-    expected = ' '.join(line.split('|')[-2].strip()[1:-1]
-        for line in script.splitlines() if re.match(r'\| [012]:\d\d', line))
+    cells = [line.split('|')[-2].strip() for line in script.splitlines()
+             if re.match(r'\| [012]:\d\d', line)]
+    table_times = [(int(a)*60+int(b), int(c)*60+int(d))
+                   for a,b,c,d in re.findall(r'^\| ([012]):(\d\d)–([012]):(\d\d) \|', script, re.M)]
+    assert table_times == [(0, 20), *list(SCENE_TIMES.values())[1:], (169, 175)], 'Script table timing differs from cut'
+    expected = ' '.join(cell[1:-1] for cell in cells if cell.startswith('“') and cell.endswith('”'))
     lines = read(HERE / 'narration.json')
-    cursor = 0
-    original = []
-    for line in lines:
-        text = line['text']
-        if expected.startswith(text, cursor):
-            original.append(text)
-            cursor += len(text)
-            if cursor < len(expected) and expected[cursor]==' ':
-                cursor += 1
-    assert ' '.join(original) == expected, 'An original narration line changed or is missing'
+    assert ' '.join(line['text'] for line in lines) == expected, 'Script table and narration differ'
     assert [(c['scene'],c['text']) for c in timeline['captions']] == [(c['scene'],c['text']) for c in lines]
+    assert [(item['scene'], item['text']) for item in timeline['evidence_badges']] == [
+        ('repair', 'Repair acceptance = replay · zero model calls'),
+        ('guard_control', 'INCONCLUSIVE · marker_never_seen')]
     focus = timeline.get('focus', [])
     required = {('receipt_fail','verdict'), ('receipt_fail','evidence'),
-        ('replay_receipt','verdict'), ('replay_receipt','zero_model_calls'), ('replay_receipt','zero_usd'),
+        ('repair','diagnosis'), ('repair','diff'), ('repair','fixed_banner'),
+        ('repair','replay_verdict'), ('repair','run_details'),
+        ('repair','zero_model_calls'), ('repair','zero_usd'),
         ('live_new','marker_seen'), ('live_new','final_checks'), ('guard_control','verdict_reason')}
     assert required <= {(f['scene'], f['phase']) for f in focus}, 'Missing focus intervals'
     previous = 0.
@@ -112,8 +113,8 @@ def main():
     chosen = planned if args.expect_narration_timeline else measured
     longest = check_gaps(chosen, closing)
     selections = [('receipt_fail','verdict'), ('receipt_fail','evidence'),
-                  ('replay_receipt','run_details'), ('live_new','marker_seen'),
-                  ('live_new','final_checks'), ('guard_control','verdict_reason')]
+                  ('repair','diff'), ('repair','fixed_banner'),
+                  ('repair','run_details'), ('live_new','marker_seen')]
     frames = []
 
     def inspect(path, timestamp):
@@ -122,13 +123,14 @@ def main():
         with Image.open(path) as im:
             gray = im.convert('L')
             stddev, entropy = ImageStat.Stat(gray).stddev[0], gray.entropy()
-            # Zoomed receipt frames are mostly white text pages (low entropy, real contrast); a blank frame has stddev near 0.
-            assert stddev>12 and entropy>0.5, (path,stddev,entropy)
+            # Zoomed receipt frames and the closing card are mostly one background colour with text
+            # (low entropy, real contrast: the card measured stddev 25, entropy 0.45); a blank frame has stddev near 0.
+            assert stddev>12 and entropy>0.2, (path,stddev,entropy)
         return dict(seconds=timestamp,stddev=round(stddev,3),entropy=round(entropy,3))
 
     # Still inspect every scene, including those without receipt focus targets.
     with tempfile.TemporaryDirectory() as tmp:
-        for scene in timeline['scenes']:
+        for scene in [timeline['title'], *timeline['scenes'], timeline['closing_card']]:
             inspect(Path(tmp)/'scene.png', (scene['start']+scene['end'])/2)
     for i,(scene,phase) in enumerate(selections, 1):
         f = next(f for f in focus if f['scene']==scene and f['phase']==phase)
@@ -146,7 +148,7 @@ def main():
     output = args.report or args.video.with_name('verification.json')
     write(output, report)
     print(f'{seconds:.3f}s; longest pre-closing gap {longest:.3f}s ({report["silence_mode"]}); '
-          f'{len(focus)} focus intervals; eight nonblank scenes; six zoomed frames')
+          f'{len(focus)} focus intervals; six nonblank scenes; six zoomed frames')
     print(output)
 
 

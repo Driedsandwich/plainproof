@@ -4,7 +4,7 @@ Run commands from the repository root. The server is the only process that
 needs the Meta credential. Use a separate terminal that has no credential set
 for all demo tools. These scripts never load `.env`, inspect environment values,
 request a key, or pass a key to a subprocess. Do not print environment variables.
-The replay and offline control run as real CLI subprocesses from that terminal.
+Only the explicitly offline no-op control runs as a CLI subprocess from that terminal.
 
 ## Install and check
 
@@ -61,28 +61,40 @@ python demo_video/record.py \
   --out demo_video/recordings/real-take-01
 ```
 
-Do not pass `--mock` for the real take. Both paid web runs use the selected
-muse-spark-1.3 model, clear Offline demo, and enable local confirmation approval.
+Do not pass `--mock` for the real take. The two proof runs and repair use
+muse-spark-1.3. The proof runs clear Offline demo and enable local confirmation
+approval; repair inherits that run’s mode and source app.
 The server handles the credential independently. The recorder waits up to seven
 minutes for each receipt; `serve --timeout-s 420` sets the web run budget to
 match. The recorder does not retry paid runs automatically.
 
-The recorder opens one headless 1280×900 page, types at 35 ms per key, records
-receipts, executes the replay, and creates the explicitly offline no-op control
-using `python -m plainproof check --mock --mock-scenario noop`. This scenario
-matches `tests.run_tests.NoOpOperator`: one wait action, then a completion claim.
-`INCONCLUSIVE` intentionally exits 2. Replay must exit 0 and produce PASS, zero
-planner/operator calls, and USD 0. Unexpected verdicts stop recording and retain
-the raw take plus an error in events.json; review the honest result and use a
-fresh take/output directory for another attempt.
+The recorder keeps a headless 1280×900 UI tab alive and records receipts in a
+second tab. It types at 35 ms per key. After the FAIL receipt inspection it
+returns to the retained UI, checks that the exact FAIL receipt is still selected,
+clicks `#repair`, and waits up to three minutes for the repair result. It focuses
+`#repair-diagnosis`, the colored `#repair-diff`, and `#repair-banner`, then clicks
+`#repair-replay` in the repaired UI tab and focuses PASS and Run details, including
+zero model calls and USD 0. This acceptance replay replaces the old CLI replay.
+The repair uses the original failing app and a throwaway patched copy.
 
-The CLI command displayed on screen includes the actual interpreter and absolute
-paths, plus actual stdout/stderr/exit code. Choose a repository location without
-private names if those paths should not appear in the submission. The recorder
-never substitutes predicted command output. CLI runs may briefly hold the prior
-page; those intervals are logged as waiting. A pair of solid-color pre-roll
-swatches calibrates the event clock against encoded frames (about 0.12 s
-precision). The swatches are excluded from the assembled movie.
+Verdicts and usage are read from the server’s actual `repair.json` and
+`replay/receipt.json`. Repair must be FIXED; replay must be PASS with zero planner
+and operator calls and USD 0. The source must match the filmed FAIL receipt.
+Unexpected results stop recording and retain both raw tab takes plus an error in
+`events.json`; review the honest result and use fresh output directories for a
+new attempt. The recorder never retries paid runs automatically.
+
+After repair, the recorder types the new delete requirement into Correct and
+inspects its PASS and positive marker sighting. It creates the offline no-op
+control using `python -m plainproof check --mock --mock-scenario noop`.
+This scenario matches `tests.run_tests.NoOpOperator`: one wait action, then a
+completion claim. INCONCLUSIVE intentionally exits 2. The recorder requires
+marker_never_seen and passing final checks.
+
+Each tab’s uncut WebM is retained. Two pre-roll swatches independently calibrate
+its encoded clock (about 0.12 s precision). `events.json` identifies each phase’s
+source video; assembly excludes the swatches and joins the actual tab footage.
+No predicted terminal output or receipt content is substituted.
 
 ## Narrate and assemble
 
@@ -102,12 +114,14 @@ Default voice: `say -v 'Ava (Premium)' -r 170`. WAV clips are mono 48 kHz,
 16-bit PCM. Manifest durations are measured by ffprobe. Use `--font` on the
 assembler if necessary. Output is 175 seconds, 1920×1080, 30 fps, H.264/AAC;
 `demo.srt` and `timeline.json` sit beside the video. Title is 4 seconds and final
-card is 6 seconds. Between them, scene lengths accommodate actual narration
-and every normal-speed typing/result/inspection interval. Only waiting is
+card is 6 seconds. Scene boundaries exactly match DEMO_SCRIPT.md: intro 0:00–0:20 (including
+the title), counter run 0:20–0:53, FAIL receipt 0:53–1:18, repair 1:18–2:00,
+delete 2:00–2:28, control 2:28–2:49, closing card 2:49–2:55. Only waiting is
 accelerated, with a visible rounded factor badge; spare time holds the final
 scene frame. If narration or normal-speed footage cannot fit, assembly fails
 rather than speeding typing/results or truncating speech. Increase TTS rate
-slightly or re-record shorter inspection pauses if necessary, then review.
+if speech is too long, lower it if narration gaps exceed four seconds, or
+re-record shorter inspection pauses if footage is too long; then review.
 
 ## Offline rehearsal
 
@@ -142,18 +156,22 @@ on every frame, including cards, and mock run badges do not claim real API use.
 - Watch the entire movie with sound. Confirm every spoken line matches the
   script and captions, caption placement, pauses, model badges, and no clipped
   speech. Silent fallback is only a pipeline test.
-- Verify the exact failing run ID is replayed against `demo_app/correct`, the
-  original receipt link works, and the replay receipt says PASS, original FAIL,
-  zero calls, USD 0, and 0 items left. The timestamps and usage in events.json
+- Verify repair uses the exact filmed failing run and its original app, the
+  colored diff is visible, the original app is untouched, and FIXED is shown.
+  Open the repair replay receipt: PASS, original FAIL, zero calls, USD 0, and
+  0 items left. Check the original receipt link works. The timestamps and usage in events.json
   come from these receipts; no README benchmark is substituted.
 - Inspect the fail receipt's plan, 1 items left evidence, and audit checkpoint.
   Inspect the new delete run's positive marker_seen and final checks. Real
   plans, latency, coordinates, and replay compatibility can vary; failed or
   weak evidence must be reviewed and re-recorded, never relabelled.
 - Confirm the offline negative control shows INCONCLUSIVE / marker_never_seen
-  with both final checks true. It must stay labelled as offline in a real video.
+  with both final checks true. A result caption uses the recorded verdict/reason
+  so the machine reason is visible alongside the receipt’s prose. Keep the
+  offline badge visible in a real video.
 - Check `verification.json`, the six extracted frames, and timeline.json. The
-  verifier examines all eight scenes; it saves six frames at fully zoomed evidence moments.
+  verifier examines all six scenes and both cards; it saves six zoomed frames,
+  including the colored diff and FIXED banner.
   ffprobe must report 170–180 seconds, 1920×1080, 30 fps, H.264 with AAC audio.
 - Check no personal information appears in paths or footage. Keep exact receipts
   and raw recordings privately. No tool captures terminal history or reads a
@@ -162,8 +180,10 @@ on every frame, including cards, and mock run badges do not claim real API use.
 
 The Linux rehearsal cannot establish the real Meta plan/replay compatibility,
 Mac say voice quality, or the exact rendering of your installed Mac fonts.
-Those are the remaining real-run checks. The hackathon/date statements come
-verbatim from DEMO_SCRIPT.md; no repair feature or simulated repair is added.
+Those are the remaining real-run checks. The fixed story and closing-card text come from DEMO_SCRIPT.md. The repair
+rehearsal uses the actual built flow with the offline mock fixer; it does not
+validate real API behavior. This environment also differs from Python 3.15 and
+ffmpeg 9 on the Mac, so those exact versions remain real-take checks.
 
 ## Evidence focus and silence checks
 

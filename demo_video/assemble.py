@@ -6,13 +6,13 @@ from pathlib import Path
 import subprocess
 import wave
 from PIL import Image, ImageDraw, ImageFont
-from common import SCENES, duration, font_path, probe, read, write, coverage_gaps
+from common import SCENES, SCENE_TIMES, TOTAL, CLOSING_START, duration, font_path, probe, read, write, coverage_gaps
 
-W, H, FPS, TOTAL = 1920, 1080, 30, 175
+W, H, FPS = 1920, 1080, 30
 BG = (12, 22, 36)
 BADGES = {'run_fail': 'Real Meta Model API run · muse-spark-1.3',
           'live_new': 'Real Meta Model API run · muse-spark-1.3',
-          'replay': 'CLI replay · real command output',
+          'repair': 'Real Meta Model API run · muse-spark-1.3',
           'guard_control': 'Offline negative control — operator does nothing'}
 
 
@@ -64,9 +64,8 @@ def card(path, font, closing=False):
         d.text((W/2, y), text, font=ImageFont.truetype(font, size), fill=color, anchor='mm')
     if closing:
         line('Plainproof', 230, 86)
-        line('Built during the Meta Global AI Developer Hackathon', 410, 48)
-        line('Oct 27 – Nov 4, 2026', 490, 43, '#a4f4d7')
-        line('Next: Muse Code repairs from the receipt — not built yet', 660, 43)
+        line('Built during the Meta Global AI Developer Hackathon · Oct 27 – Nov 4, 2026', 430, 40)
+        line('Verify · Repair · Re-verify — Muse Spark 1.3 + Meta Model API', 610, 43, '#a4f4d7')
     else:
         line('Plainproof', 220, 100)
         line('Proof before you accept an AI-built change', 365, 52)
@@ -110,11 +109,14 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     assets = args.out.parent / (args.out.stem + '_assets')
     assets.mkdir(exist_ok=True)
-    raw = Path(events['raw_video'])
-    if not raw.is_file():
-        raw = args.events.parent / raw.name
-    if not raw.is_file():
-        p.error('Raw video missing: ' + str(raw))
+    sources = {}
+    for name, source in events['raw_videos'].items():
+        path = Path(source['path'])
+        if not path.is_file():
+            path = args.events.parent / path.name
+        if not path.is_file():
+            p.error('Raw video missing: ' + str(path))
+        sources[name] = dict(path=path, offset=source['offset_seconds'], duration=duration(path))
     narration = defaultdict(list)
     phases = defaultdict(list)
     for c in manifest['clips']:
@@ -127,40 +129,32 @@ def main():
             p.error('Invalid event interval')
         phases[ph['scene']].append(ph)
     if set(phases) != set(SCENES) or set(narration) != set(SCENES):
-        p.error('All eight scenes need footage and narration')
-    raw_duration = duration(raw)
-    if max(ph['end'] for ph in events['phases']) > raw_duration + .15:
-        p.error('Events extend past raw recording')
+        p.error('All six scenes need footage and narration')
+    for ph in events['phases']:
+        source = sources[ph['video']]
+        if ph['start'] < source['offset'] or ph['end']-source['offset'] > source['duration']+.15:
+            p.error('Events extend past their raw recording')
 
-    # Preserve typing/evidence speed, compress waits, and give each scene only
-    # enough still time to accommodate speech and short natural pauses.
-    minimum, capacity = {}, {}
+    # Fixed scene boundaries are shared with DEMO_SCRIPT.md and the verifier.
+    # Only waits may accelerate; all typing and evidence remain at normal speed.
+    frames = {scene: round((end-start)*FPS) for scene,(start,end) in SCENE_TIMES.items()}
     for scene in SCENES:
         fixed = sum(ph['end']-ph['start'] for ph in phases[scene] if not ph['waiting'])
         wait = sum(ph['end']-ph['start'] for ph in phases[scene] if ph['waiting'])
+        target = frames[scene]/FPS
+        if fixed + min(wait, 1) > target:
+            p.error('Normal-speed footage exceeds the planned ' + scene + ' timing; record shorter inspection pauses')
         speech = sum(c['duration'] for c in narration[scene])
-        title = 4 if scene == 'intro' else 0
-        minimum[scene] = math.ceil(max(fixed + min(wait, 1), speech + .3*len(narration[scene])-title) * FPS)
-        capacity[scene] = math.floor((speech + 3.2*len(narration[scene])-title) * FPS)
-        if minimum[scene] > capacity[scene]:
-            p.error('Scene ' + scene + ' has too much idle footage for its narration; shorten pauses or add a factual line.')
-    available = (TOTAL-10)*FPS
-    if sum(minimum.values()) > available:
-        p.error('Normal-speed moments or narration exceed 175s; record shorter pauses or increase the TTS rate.')
-    frames = dict(minimum)
-    # Add frames evenly, respecting the maximum narration gap in each scene.
-    while sum(frames.values()) < available:
-        eligible = [scene for scene in SCENES if frames[scene] < capacity[scene]]
-        if not eligible:
-            p.error('Insufficient narration for a 175s cut without long silence; add factual lines.')
-        for scene in eligible:
-            if sum(frames.values()) == available:
-                break
-            frames[scene] += 1
+        speech_window = target + (4 if scene == 'intro' else 0)
+        if speech > speech_window:
+            p.error('Narration exceeds the planned ' + scene + ' timing; increase the TTS rate')
+        if (speech_window-speech)/len(narration[scene]) > 4:
+            p.error('Narration leaves gaps over 4s in ' + scene + '; lower the TTS rate')
     segments, captions, scene_times = [], [], []
     cursor = 4.0
     for s in SCENES:
-        target = frames[s]/FPS
+        cursor, end = SCENE_TIMES[s]
+        target = end-cursor
         fixed = sum(ph['end']-ph['start'] for ph in phases[s] if not ph['waiting'])
         wait = sum(ph['end']-ph['start'] for ph in phases[s] if ph['waiting'])
         factor = max(1., wait/max(.05, target-fixed)) if wait else 1.
@@ -170,21 +164,25 @@ def main():
             speed = factor if ph['waiting'] else 1.
             length = (ph['end']-ph['start'])/speed
             part = dict(scene=s, phase=ph['phase'], start=cursor+local, end=cursor+local+length,
-                        raw_start=ph['start'], raw_end=ph['end'], speed_factor=speed,
+                        raw_start=ph['start']-sources[ph['video']]['offset'],
+                        raw_end=ph['end']-sources[ph['video']]['offset'],
+                        raw_video=str(sources[ph['video']]['path']), video=ph['video'], speed_factor=speed,
                         waiting=ph['waiting'], hold=False)
             parts.append(part)
             local += length
         if target-local > .01:
             parts.append(dict(scene=s, phase='hold_final_frame', start=cursor+local,
-                end=cursor+target, raw_start=phases[s][-1]['end']-.08,
-                raw_end=phases[s][-1]['end']-.08, speed_factor=1., waiting=False, hold=True))
+                end=cursor+target, raw_start=phases[s][-1]['end']-.08-sources[phases[s][-1]['video']]['offset'],
+                raw_end=phases[s][-1]['end']-.08-sources[phases[s][-1]['video']]['offset'],
+                raw_video=str(sources[phases[s][-1]['video']]['path']), video=phases[s][-1]['video'],
+                speed_factor=1., waiting=False, hold=True))
         # Spread pauses through the scene instead of leaving a long silent tail.
-        # Intro speech begins over the title. Final speech ends exactly where
-        # the six-second closing card begins, so its silence is fully exempt.
+        # Intro speech begins over the title. Pauses stay distributed, with
+        # the final half-gap checked together with the silent closing card.
         speech_start = 0 if s == 'intro' else cursor
         speech_end = cursor + target
         slack = speech_end-speech_start-sum(c['duration'] for c in narration[s])
-        gap = slack / (len(narration[s]) - (.5 if s == 'closing' else 0))
+        gap = slack / len(narration[s])
         speech_cursor = speech_start + gap/2
         for c in narration[s]:
             captions.append(dict(scene=s, text=c['text'], start=speech_cursor,
@@ -199,10 +197,10 @@ def main():
                      seg['phase']==event['phase'] and not seg['hold']), None)
         if not part:
             p.error('Focus has no matching footage segment')
-        start = part['start'] + (event['start']-part['raw_start'])/part['speed_factor']
-        end = part['start'] + (event['end']-part['raw_start'])/part['speed_factor']
+        start = part['start'] + (event['start']-sources[event['video']]['offset']-part['raw_start'])/part['speed_factor']
+        end = part['start'] + (event['end']-sources[event['video']]['offset']-part['raw_start'])/part['speed_factor']
         held = next((seg for seg in segments if seg['scene']==event['scene'] and seg['hold'] and
-                     event['start'] <= seg['raw_start'] <= event['end']), None)
+                     event['start']-sources[event['video']]['offset'] <= seg['raw_start'] <= event['end']-sources[event['video']]['offset']), None)
         if held:
             end = held['end']
         rect = event['rect']
@@ -222,12 +220,20 @@ def main():
     if not focus:
         p.error('No recorded focus intervals; re-record with the updated recorder')
     gaps = coverage_gaps(captions, TOTAL)
-    if any(g['duration'] > 4.0001 and g['start'] < TOTAL-6-.001 for g in gaps):
+    if any(min(g['end'], CLOSING_START)-g['start'] > 4.0001 for g in gaps if g['start'] < CLOSING_START):
         p.error('Planned narration contains a silence longer than 4s before the closing card')
+    control = events['receipts'][events['receipt_ids']['guard_control']]
+    evidence_badges = []
+    for scene, phase, text in (
+            ('repair', 'replay_verdict', 'Repair acceptance = replay · zero model calls'),
+            ('guard_control', 'verdict_reason', control['verdict'] + ' · ' + control['verdict_reason'])):
+        evidence_badges.append(dict(scene=scene, text=text,
+            start=next(part['start'] for part in segments if part['scene']==scene and part['phase']==phase),
+            end=SCENE_TIMES[scene][1]))
     write(args.out.with_name('timeline.json'), dict(duration=TOTAL, scenes=scene_times,
           segments=segments, captions=captions, focus=focus, title=dict(start=0,end=4),
-          closing_card=dict(start=169,end=175), mock=args.mock_watermark,
-          narration_fallback=manifest['fallback']))
+          closing_card=dict(start=CLOSING_START,end=TOTAL), mock=args.mock_watermark,
+          narration_fallback=manifest['fallback'], evidence_badges=evidence_badges))
     args.out.with_suffix('.srt').write_text('\n\n'.join(
         f'{i+1}\n{srt_time(c["start"])} --> {srt_time(c["end"])}\n{c["text"]}' for i,c in enumerate(captions))+'\n', encoding='utf-8')
     for i,c in enumerate(captions):
@@ -236,9 +242,11 @@ def main():
         watermark(assets / 'watermark.png', font)
     for s,label in BADGES.items():
         # Mock footage must never carry an unqualified claim of a real API run.
-        if events['mock'] and s in {'run_fail', 'live_new'}:
+        if events['mock'] and s in {'run_fail', 'repair', 'live_new'}:
             label = 'MOCK offline run · muse-spark-1.3 scenario'
         badge(assets / f'{s}-badge.png', label, font)
+    for i, item in enumerate(evidence_badges):
+        badge(assets / f'evidence-{i}.png', item['text'], font, y=100)
 
     outputs = []
     def render(name, parts, overlays, length, camera=()):
@@ -249,10 +257,10 @@ def main():
                 argv += ['-loop', '1', '-framerate', '30', '-t', length, '-i', part['card']]
             elif part['hold']:
                 still = assets / f'{name}-hold.png'
-                ffmpeg(['-ss', part['raw_start'], '-i', raw, '-frames:v', '1', still])
+                ffmpeg(['-ss', part['raw_start'], '-i', part['raw_video'], '-frames:v', '1', still])
                 argv += ['-loop', '1', '-framerate', '30', '-t', part['end']-part['start'], '-i', still]
             else:
-                argv += ['-threads', '1', '-ss', part['raw_start'], '-t', part['raw_end']-part['raw_start'], '-i', raw]
+                argv += ['-threads', '1', '-ss', part['raw_start'], '-t', part['raw_end']-part['raw_start'], '-i', part['raw_video']]
             speed = part.get('speed_factor', 1)
             content_height = H if part.get('card') else 900
             graph.append(f'[{index}:v]setpts=(PTS-STARTPTS)/{speed:.9f},scale={W}:{content_height}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0c1624[v{index}]')
@@ -327,6 +335,8 @@ def main():
         length = scene['end']-start
         overlays = [(assets / f'caption-{j}.png', c['start']-start, c['end']-start)
                     for j,c in enumerate(captions) if c['scene']==s]
+        overlays += [(assets / f'evidence-{j}.png', item['start']-start, item['end']-start)
+                     for j,item in enumerate(evidence_badges) if item['scene']==s]
         if s in BADGES:
             overlays.append((assets / f'{s}-badge.png', 0, length))
         parts = [part for part in segments if part['scene']==s]
@@ -338,7 +348,7 @@ def main():
         camera = [{**f, 'start': f['start']-start, 'end': f['end']-start} for f in focus if f['scene']==s]
         render(f'{i+1:02d}-{s}', parts, overlays, length, camera)
     card(assets / 'closing.png', font, closing=True)
-    render('09-closing-card', [dict(card=assets / 'closing.png')], [], 6)
+    render('07-closing-card', [dict(card=assets / 'closing.png')], [], 6)
     # Identical encodes allow lossless packet concatenation. This is the concat
     # demuxer, not another video filter.
     listing = assets / 'concat.txt'

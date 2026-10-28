@@ -8,6 +8,10 @@
     "text": "Plainproof tests that requirement and gives them evidence they can inspect."
   },
   {
+    "scene": "intro",
+    "text": "In this web app you pick a demo app, type a requirement in plain English, and press Run proof."
+  },
+  {
     "scene": "run_fail",
     "text": "I choose the broken counter app and type the behavior I need. This is a real Meta Model API run, with generic confirmations approved only for this local app."
   },
@@ -32,20 +36,32 @@
     "text": "Every screenshot, action and check is stored in the receipt. Checks compare literal page text."
   },
   {
-    "scene": "replay",
-    "text": "Now I switch to the correct app. Replay is a CLI operation today: I reuse the failing receipt's executed actions and checks against this version."
+    "scene": "repair",
+    "text": "Muse Spark 1.3 reads the failing receipt and the app files. From that evidence, it proposes the smallest edit."
   },
   {
-    "scene": "replay",
-    "text": "Replay repeats the recorded actions with zero model calls."
+    "scene": "repair",
+    "text": "Plainproof applies the proposed edit to a throwaway copy, never the original app."
   },
   {
-    "scene": "replay_receipt",
-    "text": "The same recorded test now passes. Replay makes zero model calls and costs zero dollars in model usage. It repeats the recorded coordinates; it does not ask a model to try again."
+    "scene": "repair",
+    "text": "The same recorded path is replayed against that copy with zero model calls."
+  },
+  {
+    "scene": "repair",
+    "text": "The fix is accepted only if that replay passes."
+  },
+  {
+    "scene": "repair",
+    "text": "The diff and both receipts are kept."
   },
   {
     "scene": "live_new",
     "text": "Here is a new requirement, typed live: add one item, delete it, and leave zero items."
+  },
+  {
+    "scene": "live_new",
+    "text": "Muse Spark 1.3 plans new checks for it, and the operator works from screenshots again."
   },
   {
     "scene": "live_new",
@@ -62,13 +78,5 @@
   {
     "scene": "guard_control",
     "text": "The marker guard requires this run's marker to appear at least once."
-  },
-  {
-    "scene": "closing",
-    "text": "Everything shown was built for this hackathon, starting October 27, including the day-one harness. Next, I want Muse Code to fix the app from the failing receipt."
-  },
-  {
-    "scene": "closing",
-    "text": "That repair loop is not built yet. Today, Plainproof provides the checks, evidence, and model-free replay."
   }
 ]
