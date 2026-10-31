@@ -367,10 +367,18 @@ async def repair_suite():
 import os, pathlib, sys
 assert sys.argv[1:3] == ['exec', '--prompt-file']
 assert '--yolo' not in sys.argv and '--sandbox-network' in sys.argv
+for flag in ('--disable-approval', '--disable-sandbox', '--trust-workspace', '--approval-mode'):
+    assert flag not in sys.argv, flag
+assert '--disable-shell' in sys.argv and '--no-foreign-personal-context' in sys.argv
 assert os.environ['META_API_KEY']
 p = pathlib.Path('index.html')
 p.write_text(p.read_text().replace("items.push({{text, done: false}});\\n  input.value = '';", "items.push({{text, done: false}});\\n  save();\\n  input.value = '';"))
+import json
+print(json.dumps({{'payload_type': 'run.output.delta', 'payload': {{'text': 'Added save() in ' + os.getcwd() + '/index.html.'}}}}))
+print(json.dumps({{'payload_type': 'run.usage', 'payload': {{'models': [{{'model': MODEL, 'input_tokens': 1000,
+    'cached_tokens': 400, 'output_tokens': 50, 'calls': 2}}]}}}}))
 '''.format(python=sys.executable)
+    script = script.replace('import json\n', "import json\nMODEL = 'muse-spark-1.3'\n")
     binary.write_text(script)
     binary.chmod(0o755)
     with patch.dict(os.environ, {'PATH': str(fakebin)}):
@@ -382,7 +390,15 @@ p.write_text(p.read_text().replace("items.push({{text, done: false}});\\n  input
             raise AssertionError('Muse Code enabled without opt-in')
         r = await repair(OUT / 'reload-bug_reload', config('repair-muse', 'bug_reload'), fixer='muse-code',
                          fixer_impl=MuseCodeFixer(enabled=True))
+        assert r['verdict'] == 'FIXED' and r['model_calls'] == {'fixer': 2}, r
+        assert r['usd'] == round((600 * 1.25 + 400 * .15 + 50 * 4.25) / 1e6, 8), r
+        assert r['diagnosis'] == 'Added save() in index.html.', r
+        # Usage from another model has no known price here: report it as unknown, never as zero.
+        binary.write_text(script.replace("MODEL = 'muse-spark-1.3'", "MODEL = 'other-model'"))
+        r = await repair(OUT / 'reload-bug_reload', config('repair-muse-other', 'bug_reload'), fixer='muse-code',
+                         fixer_impl=MuseCodeFixer(enabled=True))
         assert r['verdict'] == 'FIXED' and r['usd'] is None and r['usage'] is None, r
+        binary.write_text(script)
         for case, mutation in [
             ('extra', "pathlib.Path('extra.py').write_text('disallowed')"),
             ('symlink', "pathlib.Path('extra.js').symlink_to('index.html')"),

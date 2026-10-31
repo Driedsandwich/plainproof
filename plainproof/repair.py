@@ -248,7 +248,7 @@ async def repair(receipt_dir, config, *, fixer='spark', fresh_check=False, on_ev
             if fixer == 'muse-code':
                 if config.mock:
                     raise RepairRejected('--mock cannot launch Muse Code; use --fixer spark')
-                adapter = MuseCodeFixer(enabled=True)
+                adapter = MuseCodeFixer(enabled=True, model=config.model)
             elif fixer == 'spark':
                 adapter = SparkFixer(config.model, config.mock)
             else:
