@@ -13,7 +13,7 @@ flowchart TD
     C --> D[Deterministic judge on page text]
     D --> E[Receipt: checks, actions, screenshots, evidence]
     E --> F[Model-free replay against another app version]
-    E --> G[Muse Spark 1.3 or Muse Code proposes minimal app edits]
+    E --> G[Muse Spark 1.3, directly or via Muse Code, proposes minimal app edits]
     G --> H[Throwaway app copy and guarded edits]
     H --> F
 ```

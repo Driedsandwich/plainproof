@@ -30,6 +30,6 @@ Recording checklist:
 - Preserve all surviving narration verbatim. New repair narration is limited to the on-screen receipt/app-file diagnosis, minimal edit, throwaway copy, recorded zero-call replay, acceptance condition and retained diff/receipts. Do not narrate timing, price or benchmark numbers.
 - Keep mock rehearsals visibly watermarked throughout, including both cards. Real takes show the model badge on counter, repair and delete; the control always has its offline badge.
 - Verify no silence exceeds four seconds before the closing card. For silent fallback rehearsals, verify planned narration timing explicitly; real audio must pass the measured silence check.
-- Show dated repository history as it is. Muse Code is optional and experimental; this demo uses the built Muse Spark 1.3 repair flow.
+- Show dated repository history as it is. Muse Code is an optional fixer (its real runs are in the README); this demo uses the default Muse Spark 1.3 repair flow.
 
 The Linux mock rehearsal does not establish real model plan/replay compatibility, actual API timing/cost, macOS say voice quality, Python 3.15 behavior, ffmpeg 9 behavior, or the installed Mac font rendering. Review those on the actual Mac take. No fresh model check is part of this repair acceptance scene.
